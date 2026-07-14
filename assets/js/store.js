@@ -37,6 +37,7 @@ UG.Store = (function () {
         { id: u.uid(), name: "זקן ועיצוב", price: 40, durationMin: 20, icon: "🧔", active: true },
       ],
       bookings: [],
+      blocks: [],            // שעות שהבעלים סימן כלא-פנויות: "YYYY-MM-DD|HH:MM"
       updatedAt: Date.now(),
     };
   }
@@ -52,6 +53,9 @@ UG.Store = (function () {
     for (let i = 0; i < 7; i++) s.schedule[i] = Object.assign({}, base.schedule[i], s.schedule[i]);
     if (!Array.isArray(s.services)) s.services = base.services;
     if (!Array.isArray(s.bookings)) s.bookings = [];
+    if (!Array.isArray(s.blocks)) s.blocks = [];
+    // מעבר למודל של מרווחי 45 דק׳ — נרמול ערכים ישנים
+    if (![30, 45, 60].includes(Number(s.shop.slotStep))) s.shop.slotStep = 45;
     s.version = 1;
     return s;
   }
@@ -198,6 +202,10 @@ UG.Store = (function () {
     if (!svc) return { ok: false, reason: "השירות אינו קיים יותר" };
     const startMin = u.toMin(data.start);
     const endMin = startMin + svc.durationMin;
+    // האם הבעלים חסם את השעה הזו?
+    if ((cur.blocks || []).includes(data.date + "|" + data.start)) {
+      return { ok: false, reason: "השעה כבר אינה זמינה" };
+    }
     // בדיקת חפיפה מול תורים קיימים
     const clash = cur.bookings.some((b) => {
       if (b.status === "cancelled" || b.date !== data.date) return false;
@@ -233,17 +241,27 @@ UG.Store = (function () {
   }
 
   async function setBookingStatus(id, status) {
-    const latest = backend.read ? backend.read() : null;
-    if (latest && backend.mode === "local") state = latest;
+    if (backend.mode === "local") { const latest = backend.read(); if (latest) state = latest; }
     const b = state.bookings.find((x) => x.id === id);
     if (b) { b.status = status; await persist(); }
     return b;
   }
 
+  // סימון/ביטול חסימה של שעה (בעלים)
+  async function setBlock(dateKey, time, blocked) {
+    if (backend.mode === "local") { const latest = backend.read(); if (latest) state = latest; }
+    const key = dateKey + "|" + time;
+    state.blocks = state.blocks || [];
+    const has = state.blocks.includes(key);
+    if (blocked && !has) state.blocks.push(key);
+    else if (!blocked && has) state.blocks = state.blocks.filter((k) => k !== key);
+    await persist();
+  }
+
   return {
     init, subscribe, get,
     setDay, saveShop, upsertService, removeService,
-    createBooking, setBookingStatus,
+    createBooking, setBookingStatus, setBlock,
     get mode() { return backend ? backend.mode : "local"; },
   };
 })();

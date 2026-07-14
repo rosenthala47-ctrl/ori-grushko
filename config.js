@@ -16,7 +16,7 @@ window.UG_CONFIG = {
     tagline: "מספרה · עיצוב שיער",
     phone: "",
     address: "",
-    slotStep: 15,          // כל כמה דקות מוצע תור חדש
+    slotStep: 45,          // מרווח בין תורים (דקות) — למשל כל 45 דקות
     reminderMinutes: 60,   // כמה זמן לפני התור נשלחת תזכורת
   },
 

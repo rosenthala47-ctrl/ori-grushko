@@ -12,10 +12,11 @@
   const view = {
     route: (function () { const r = localStorage.getItem("ug_route"); return r === "owner" || r === "client" ? r : "client"; })(), // client | owner
     clientTab: "book",   // book | mine
-    ownerTab: "cal",     // cal | services | bookings | settings
+    ownerTab: "cal",     // cal | hours | services | bookings | settings
     selService: null,
-    selDate: null,
+    selDate: null,       // יום נבחר בצד הלקוח
     selSlot: null,
+    oDate: null,         // יום נבחר בצד הבעלים (תצוגת יומן)
   };
   let ownerSeen = null;     // Set של מזהי תורים שהבעלים כבר ראה (זיהוי תור חדש)
   let identity = loadIdentity();
@@ -34,7 +35,7 @@
       const i = JSON.parse(localStorage.getItem("ug_identity") || "null");
       if (i && i.userId) return i;
     } catch (e) {}
-    const fresh = { userId: u.uid(), name: "", phone: "" };
+    const fresh = { userId: u.uid(), firstName: "", lastName: "", name: "", phone: "" };
     localStorage.setItem("ug_identity", JSON.stringify(fresh));
     return fresh;
   }
@@ -80,27 +81,33 @@
   /* =======================================================================
      חישוב זמינות תורים
      =======================================================================*/
-  function daySlots(dateKey, service) {
+  // רשת שעות אחידה ליום נתון (מרווחי slotStep, למשל 45 דק׳).
+  // מחזיר לכל משבצת: האם תפוסה (תור קיים), האם חסומה ע״י הבעלים, האם עברה.
+  function gridSlots(dateKey) {
     const st = Store.get();
     const dow = u.parseKey(dateKey).getDay();
     const sched = st.schedule[dow];
     if (!sched || !sched.active) return [];
     const open = u.toMin(sched.open), close = u.toMin(sched.close);
-    const step = st.shop.slotStep || 15;
-    const dur = service.durationMin;
+    const step = st.shop.slotStep || 45;
     const now = new Date();
     const isToday = u.isSameDay(u.parseKey(dateKey), now);
     const nowMin = now.getHours() * 60 + now.getMinutes();
+    const blocks = new Set(st.blocks || []);
     const dayBookings = st.bookings.filter((b) => b.status !== "cancelled" && b.date === dateKey);
     const slots = [];
-    for (let t = open; t + dur <= close; t += step) {
-      if (isToday && t <= nowMin) continue; // דלג על שעות שכבר עברו
-      const end = t + dur;
-      const taken = dayBookings.some((b) => {
+    for (let t = open; t + step <= close; t += step) {
+      const start = u.toHHMM(t), end = t + step;
+      const booking = dayBookings.find((b) => {
         const bs = u.toMin(b.start), be = u.toMin(b.end);
         return t < be && end > bs;
+      }) || null;
+      slots.push({
+        start,
+        booking,
+        blocked: blocks.has(dateKey + "|" + start),
+        past: isToday && t <= nowMin,
       });
-      slots.push({ start: u.toHHMM(t), taken });
     }
     return slots;
   }
@@ -228,16 +235,17 @@
       </button>`;
     }).join("");
 
-    // שעות
+    // שעות — רשת אחידה; מסתירים משבצות שעברו/חסומות, מסמנים תפוסות
     let slotsHtml;
-    const slots = service ? daySlots(view.selDate, service) : [];
+    const allSlots = gridSlots(view.selDate).filter((s) => !s.past && !s.blocked);
+    const hasFree = allSlots.some((s) => !s.booking);
     if (!st.schedule[u.parseKey(view.selDate).getDay()].active) {
       slotsHtml = emptyState("🚫", "סגור ביום זה", "בחרו יום אחר מהיומן");
-    } else if (!slots.length) {
+    } else if (!allSlots.length || !hasFree) {
       slotsHtml = emptyState("⌛", "אין תורים פנויים", "כל התורים ליום זה תפוסים או שהיום הסתיים");
     } else {
-      slotsHtml = `<div class="slots-grid">` + slots.map((s) => {
-        if (s.taken) return `<div class="slot taken">${s.start}<span class="slot-tag">תפוס</span></div>`;
+      slotsHtml = `<div class="slots-grid">` + allSlots.map((s) => {
+        if (s.booking) return `<div class="slot taken">${s.start}<span class="slot-tag">תפוס</span></div>`;
         return `<button class="slot ${view.selSlot === s.start ? "selected" : ""}" data-slot="${s.start}">${s.start}</button>`;
       }).join("") + `</div>`;
     }
@@ -317,7 +325,6 @@
     const st = Store.get();
     const service = st.services.find((s) => s.id === view.selService);
     if (!service || !view.selSlot) return;
-    const needName = !identity.name;
     openModal(`
       <div class="m-title">אישור קביעת תור</div>
       <div class="m-sub">בדקו את הפרטים לפני האישור</div>
@@ -327,21 +334,30 @@
       <div class="summary-row"><span class="sr-k">משך</span><span class="sr-v">${u.fmtDuration(service.durationMin)}</span></div>
       <div class="summary-row"><span class="sr-k">מחיר</span><span class="sr-v big">${u.fmtPrice(service.price)}</span></div>
       <div style="height:18px"></div>
-      <div class="field"><label>שם מלא</label>
-        <input class="input" id="cf-name" placeholder="השם שלך" value="${esc(identity.name)}"></div>
-      <div class="field"><label>טלפון</label>
+      <div class="field-row">
+        <div class="field"><label>שם פרטי</label>
+          <input class="input" id="cf-first" placeholder="שם פרטי" value="${esc(identity.firstName || "")}"></div>
+        <div class="field"><label>שם משפחה</label>
+          <input class="input" id="cf-last" placeholder="שם משפחה" value="${esc(identity.lastName || "")}"></div>
+      </div>
+      <div class="field"><label>טלפון נייד</label>
         <input class="input" id="cf-phone" type="tel" inputmode="tel" placeholder="050-0000000" value="${esc(identity.phone)}"></div>
       <button class="btn btn-primary" data-act="do-book">אישור וקביעת התור</button>
       <button class="btn btn-ghost" data-act="close-modal" style="margin-top:8px">ביטול</button>
-      ${needName ? `<p class="hint">כדי לקבל תזכורת מומלץ לאשר התראות לאחר הקביעה.</p>` : ""}
     `);
   }
 
   async function doBook() {
-    const name = ($("#cf-name") && $("#cf-name").value.trim()) || "";
-    const phone = ($("#cf-phone") && $("#cf-phone").value.trim()) || "";
-    if (!name) { toast("נא להזין שם", "", "✋"); return; }
-    identity.name = name; identity.phone = phone; saveIdentity();
+    const first = ($("#cf-first") && $("#cf-first").value.trim()) || "";
+    const last = ($("#cf-last") && $("#cf-last").value.trim()) || "";
+    const phoneRaw = ($("#cf-phone") && $("#cf-phone").value.trim()) || "";
+    if (!first) { toast("נא להזין שם פרטי", "", "✋"); return; }
+    if (!last) { toast("נא להזין שם משפחה", "", "✋"); return; }
+    if (!u.isValidPhone(phoneRaw)) { toast("מספר טלפון לא תקין", "", "📵"); return; }
+    const phone = u.fmtPhone(phoneRaw);
+    const name = first + " " + last;
+    identity.firstName = first; identity.lastName = last; identity.name = name; identity.phone = phone;
+    saveIdentity();
     const btn = $("[data-act='do-book']"); if (btn) { btn.disabled = true; btn.textContent = "קובע תור…"; }
     const res = await Store.createBooking({
       serviceId: view.selService, date: view.selDate, start: view.selSlot,
@@ -381,6 +397,7 @@
     const todayCount = st.bookings.filter((b) => b.status !== "cancelled" && b.date === todayKey).length;
     let body;
     if (view.ownerTab === "cal") body = ownerCal(st);
+    else if (view.ownerTab === "hours") body = ownerHours(st);
     else if (view.ownerTab === "services") body = ownerServices(st);
     else if (view.ownerTab === "bookings") body = ownerBookings(st);
     else body = ownerSettings(st);
@@ -394,6 +411,7 @@
       <div class="content" id="oscroll">${body}</div>
       <div class="tabbar">
         <button data-otab="cal" class="${view.ownerTab === "cal" ? "active" : ""}"><span class="tb-ico">🗓️</span>יומן</button>
+        <button data-otab="hours" class="${view.ownerTab === "hours" ? "active" : ""}"><span class="tb-ico">🕐</span>שעות</button>
         <button data-otab="services" class="${view.ownerTab === "services" ? "active" : ""}"><span class="tb-ico">✂️</span>שירותים</button>
         <button data-otab="bookings" class="${view.ownerTab === "bookings" ? "active" : ""}">
           <span class="tb-ico" style="position:relative">🎟️${upcomingCount ? `<span class="badge-count" style="inset-inline-start:auto;inset-inline-end:-10px;top:-6px">${upcomingCount}</span>` : ""}</span>תורים</button>
@@ -413,7 +431,71 @@
     return html;
   }
 
+  // תצוגת יומן יומית — כל השעות של היום הנבחר, עם אפשרות לסמן פנוי/לא-פנוי
   function ownerCal(st) {
+    const days = nextDays(14);
+    if (!view.oDate || !days.includes(view.oDate)) {
+      view.oDate = days.find((k) => st.schedule[u.parseKey(k).getDay()].active) || days[0];
+    }
+    const dayChips = days.map((k) => {
+      const d = u.parseKey(k);
+      const off = !st.schedule[d.getDay()].active;
+      return `
+      <button class="day-chip ${view.oDate === k ? "selected" : ""} ${off ? "off" : ""}"
+              data-oday="${k}" ${off ? "disabled" : ""}>
+        <div class="dc-dow">${off ? "סגור" : u.DOW_SHORT[d.getDay()]}</div>
+        <div class="dc-num">${d.getDate()}</div>
+        <div class="dc-mon">${u.MON[d.getMonth()]}</div>
+      </button>`;
+    }).join("");
+
+    const dow = u.parseKey(view.oDate).getDay();
+    const sched = st.schedule[dow];
+    let body;
+    if (!sched.active) {
+      body = emptyState("🚫", "היום סגור", "אפשר לפתוח את היום בלשונית ״שעות״");
+    } else {
+      const slots = gridSlots(view.oDate).filter((s) => !s.past);
+      if (!slots.length) {
+        body = emptyState("⌛", "אין שעות ליום זה", "בדקו את שעות הפעילות בלשונית ״שעות״");
+      } else {
+        body = `<div class="card" style="padding:6px 14px">` + slots.map((s) => {
+          if (s.booking) {
+            return `
+            <div class="slot-line booked">
+              <span class="sl-time">${s.start}</span>
+              <div class="sl-mid">
+                <span class="sl-name">${esc(s.booking.userName || "לקוח")}</span>
+                <span class="sl-sub">${esc(s.booking.serviceName)}</span>
+              </div>
+              <span class="status-tag status-booked">תפוס</span>
+            </div>`;
+          }
+          const available = !s.blocked;
+          return `
+          <div class="slot-line ${s.blocked ? "off" : ""}">
+            <span class="sl-time">${s.start}</span>
+            <div class="sl-mid"><span class="sl-state ${available ? "free" : "blocked"}">${available ? "פנוי" : "לא פנוי"}</span></div>
+            <label class="switch">
+              <input type="checkbox" data-block="${view.oDate}|${s.start}" ${available ? "checked" : ""}>
+              <span class="track"></span><span class="thumb"></span>
+            </label>
+          </div>`;
+        }).join("") + `</div>`;
+      }
+    }
+
+    return `
+      <div class="section-title">בחירת יום</div>
+      <div class="days-scroll">${dayChips}</div>
+      <div class="section-title">${esc(u.longDate(view.oDate))} · סימון זמינות</div>
+      ${body}
+      <p class="hint">כבו את המתג ליד שעה כדי לסמן אותה כ״לא פנוי״ — היא תיעלם מיד אצל הלקוחות. שעה שכבר נקבעה מסומנת ״תפוס״.</p>
+    `;
+  }
+
+  // לשונית ״שעות״ — ימי הפעילות ושעות העבודה השבועיות
+  function ownerHours(st) {
     const rows = [];
     for (let i = 0; i < 7; i++) {
       const d = st.schedule[i];
@@ -436,7 +518,7 @@
     return `
       <div class="section-title">ימי הפעילות ושעות העבודה</div>
       <div class="card">${rows.join("")}</div>
-      <p class="hint">כל שינוי נשמר מיד ומתעדכן אצל הלקוחות בזמן אמת. שינוי שעות ישפיע רק על תורים חדשים — תורים שכבר נקבעו נשמרים.</p>
+      <p class="hint">כל שינוי נשמר מיד ומתעדכן אצל הלקוחות בזמן אמת. שעות העבודה קובעות אילו שעות מוצגות בלשונית ״יומן״.</p>
     `;
   }
 
@@ -546,7 +628,7 @@
             <input class="input" id="set-phone" type="tel" value="${esc(st.shop.phone || "")}"></div>
           <div class="field"><label>מרווח בין תורים</label>
             <select class="input" id="set-step">
-              ${[10, 15, 20, 30].map((n) => `<option value="${n}" ${st.shop.slotStep === n ? "selected" : ""}>${n} דקות</option>`).join("")}
+              ${[30, 45, 60].map((n) => `<option value="${n}" ${st.shop.slotStep === n ? "selected" : ""}>${n} דקות</option>`).join("")}
             </select>
           </div>
         </div>
@@ -600,13 +682,14 @@
       // כניסת מנהל נסתרת: 3 הקשות רצופות על הלוגו (בתצוגת לקוח בלבד)
       if (e.target.closest(".logo-dot") && view.route === "client") { onLogoTap(); return; }
 
-      const t = e.target.closest("[data-act],[data-svc],[data-day],[data-slot],[data-tab],[data-otab],[data-active]");
+      const t = e.target.closest("[data-act],[data-svc],[data-day],[data-oday],[data-slot],[data-tab],[data-otab],[data-active]");
       if (!t) return;
 
       // בורר שירות
       if (t.dataset.svc) { view.selService = t.dataset.svc; view.selSlot = null; render(); return; }
       if (t.dataset.slot) { view.selSlot = t.dataset.slot; render(); return; }
       if (t.dataset.day && t.classList.contains("day-chip")) { view.selDate = t.dataset.day; view.selSlot = null; render(); return; }
+      if (t.dataset.oday) { view.oDate = t.dataset.oday; render(); return; }
       if (t.dataset.tab) { view.clientTab = t.dataset.tab; render(); return; }
       if (t.dataset.otab) { view.ownerTab = t.dataset.otab; render(); return; }
 
@@ -649,7 +732,12 @@
     // יומן בעלים — מתגי הפעלה ושעות
     document.addEventListener("change", async (e) => {
       const a = e.target;
-      if (a.dataset.active !== undefined && a.type === "checkbox") {
+      if (a.dataset.block !== undefined && a.type === "checkbox") {
+        // מתג פנוי/לא-פנוי ליד שעה (checked = פנוי)
+        const [dk, time] = a.dataset.block.split("|");
+        await Store.setBlock(dk, time, !a.checked);
+        render();
+      } else if (a.dataset.active !== undefined && a.type === "checkbox") {
         await Store.setDay(Number(a.dataset.active), { active: a.checked });
         render();
       } else if (a.dataset.time) {

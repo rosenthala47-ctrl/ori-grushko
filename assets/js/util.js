@@ -58,6 +58,25 @@ UG.util = (function () {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
+  // נרמול מספר טלפון ישראלי (הסרת רווחים/מקפים, המרת +972 ל-0)
+  function normalizePhone(s) {
+    let n = String(s == null ? "" : s).replace(/[^\d+]/g, "");
+    if (n.startsWith("+972")) n = "0" + n.slice(4);
+    else if (n.startsWith("972")) n = "0" + n.slice(3);
+    return n;
+  }
+  // בדיקת תקינות: נייד ישראלי (05X-XXXXXXX) או קווי (0X-XXXXXXX)
+  function isValidPhone(s) {
+    const n = normalizePhone(s);
+    return /^05\d{8}$/.test(n) || /^0[2-489]\d{7}$/.test(n);
+  }
+  // תצוגה יפה: 050-1234567
+  function fmtPhone(s) {
+    const n = normalizePhone(s);
+    if (/^05\d{8}$/.test(n)) return n.slice(0, 3) + "-" + n.slice(3);
+    return s || "";
+  }
+
   function escapeHtml(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -66,5 +85,6 @@ UG.util = (function () {
   return {
     DOW, DOW_SHORT, MON, pad, dateKey, parseKey, toMin, toHHMM,
     fmtDuration, fmtPrice, dateTime, isSameDay, relativeDay, longDate, uid, escapeHtml,
+    normalizePhone, isValidPhone, fmtPhone,
   };
 })();
