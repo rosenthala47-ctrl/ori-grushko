@@ -713,6 +713,8 @@
           toast("התור בוטל", "", "🗑️"); render(); break;
 
         case "enable-notif": handleEnableNotif(); break;
+        case "install-app": doInstall(); break;
+        case "install-dismiss": suppressInstall(3); hideInstallBar(); break;
 
         // שירותים
         case "add-svc": svcModal(null); break;
@@ -809,6 +811,61 @@
   }
 
   /* =======================================================================
+     התקנה כאפליקציה (PWA) — הודעת "הוסף למסך הבית" בכניסה
+     =======================================================================*/
+  let deferredPrompt = null;
+  function isStandalone() {
+    return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  }
+  function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
+  function installSuppressed() { return Date.now() < Number(localStorage.getItem("ug_install_dismiss") || 0); }
+  function suppressInstall(days) { localStorage.setItem("ug_install_dismiss", String(Date.now() + days * 86400000)); }
+  function hideInstallBar() { const b = document.getElementById("installBar"); if (b) b.classList.remove("show"); }
+
+  function showInstallBar(mode) {
+    if (isStandalone() || installSuppressed()) return;
+    let bar = document.getElementById("installBar");
+    if (!bar) { bar = document.createElement("div"); bar.id = "installBar"; bar.className = "install-bar"; document.body.appendChild(bar); }
+    const card = (body) => `<div class="install-card"><div class="ic-ico">📲</div>${body}<button class="ic-x" data-act="install-dismiss" aria-label="סגור">✕</button></div>`;
+    if (mode === "ios") {
+      bar.innerHTML = card(`<div class="ic-body"><div class="ic-title">התקן את האפליקציה בטלפון</div><div class="ic-sub">לחצו על <b>שיתוף</b> ⬆️ ואז <b>״הוסף למסך הבית״</b></div></div>`);
+    } else if (mode === "generic") {
+      bar.innerHTML = card(`<div class="ic-body"><div class="ic-title">התקן את האפליקציה</div><div class="ic-sub">בתפריט הדפדפן (⋮) בחרו ״התקנת אפליקציה״</div></div>`);
+    } else {
+      bar.innerHTML = card(`<div class="ic-body"><div class="ic-title">התקן את האפליקציה</div><div class="ic-sub">גישה מהירה ממסך הבית וקבלת תזכורות</div></div><button class="btn btn-primary btn-sm" data-act="install-app" style="width:auto">התקן</button>`);
+    }
+    requestAnimationFrame(() => bar.classList.add("show"));
+  }
+
+  async function doInstall() {
+    if (!deferredPrompt) { showInstallBar("generic"); return; }
+    deferredPrompt.prompt();
+    try { await deferredPrompt.userChoice; } catch (e) {}
+    deferredPrompt = null;
+    hideInstallBar();
+  }
+
+  function initInstall() {
+    if (isStandalone()) return;
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      if (!installSuppressed()) showInstallBar("android");
+    });
+    window.addEventListener("appinstalled", () => {
+      hideInstallBar(); deferredPrompt = null;
+      toast("האפליקציה הותקנה 🎉", "good", "📲");
+    });
+    // הצגת ההודעה בכניסה
+    setTimeout(() => {
+      if (isStandalone() || installSuppressed()) return;
+      if (deferredPrompt) showInstallBar("android");
+      else if (isIOS()) showInstallBar("ios");
+      else if (/android/i.test(navigator.userAgent)) showInstallBar("generic");
+    }, 2200);
+  }
+
+  /* =======================================================================
      תגובה לשינויים מהחנות (זמן אמת)
      =======================================================================*/
   function onStoreChange(st) {
@@ -841,6 +898,7 @@
   async function boot() {
     Notify.registerSW();
     wire();
+    initInstall();
     await Store.init();
     Store.subscribe(onStoreChange);
     if (view.route === "owner" && localStorage.getItem("ug_owner_auth") !== "1") view.route = "client";
