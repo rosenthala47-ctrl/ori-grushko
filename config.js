@@ -31,11 +31,12 @@ window.UG_CONFIG = {
      אם משאירים ריק — האפליקציה פשוט תרוץ במצב מקומי.
      --------------------------------------------------------------------- */
   firebase: {
-    apiKey: "",
-    authDomain: "",
-    projectId: "",
-    storageBucket: "",
-    messagingSenderId: "",
-    appId: "",
+    apiKey: "AIzaSyDPl_DjdAV873aHBBCoqnNk1YTZx6eG7kQ",
+    authDomain: "gb201-e1c85.firebaseapp.com",
+    projectId: "gb201-e1c85",
+    storageBucket: "gb201-e1c85.firebasestorage.app",
+    messagingSenderId: "92589759772",
+    appId: "1:92589759772:web:8fb918b085df403bbe2ed9",
+    measurementId: "G-7JXW84Z5PW",
   },
 };

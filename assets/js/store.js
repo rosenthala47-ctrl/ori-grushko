@@ -156,17 +156,26 @@ UG.Store = (function () {
     if (s) { state = s; emit(); }
   }
 
+  async function bootBackend(b) {
+    // מוודא שהחיבור באמת עובד (קריאה/כתיבה ראשונית)
+    let s = await b.read();
+    if (!s) { s = defaultState(); await b.write(s); }
+    return s;
+  }
+
   async function init() {
-    // בחירת backend
+    // ניסיון חיבור לענן; אם נכשל (אין מסד נתונים / חוקי גישה / לא מקוון) — נופלים למצב מקומי
     try {
-      backend = await loadFirebase();
+      const fb = await loadFirebase();
+      const s = await bootBackend(fb);
+      backend = fb; state = s;
     } catch (e) {
+      if (UG_CONFIG.firebase && UG_CONFIG.firebase.apiKey) {
+        console.warn("[UG] Firebase לא זמין — עוברים למצב מקומי.", e && e.message ? e.message : e);
+      }
       backend = LocalBackend();
+      state = await bootBackend(backend);
     }
-    // טעינת מצב קיים או יצירת ברירת מחדל
-    let s = await backend.read();
-    if (!s) { s = defaultState(); await backend.write(s); }
-    state = s;
     backend.onRemote((remote) => reloadFromRemote(remote));
     emit();
     return state;
