@@ -10,7 +10,7 @@
 
   /* ---------- מצב תצוגה מקומי (לא נשמר בשרת) ---------- */
   const view = {
-    route: localStorage.getItem("ug_route") || "role", // role | client | owner
+    route: (function () { const r = localStorage.getItem("ug_route"); return r === "owner" || r === "client" ? r : "client"; })(), // client | owner
     clientTab: "book",   // book | mine
     ownerTab: "cal",     // cal | services | bookings | settings
     selService: null,
@@ -19,6 +19,15 @@
   };
   let ownerSeen = null;     // Set של מזהי תורים שהבעלים כבר ראה (זיהוי תור חדש)
   let identity = loadIdentity();
+
+  // כניסת מנהל נסתרת — 3 הקשות רצופות על הלוגו
+  let logoTaps = 0, logoTapTimer = null;
+  function onLogoTap() {
+    logoTaps++;
+    clearTimeout(logoTapTimer);
+    logoTapTimer = setTimeout(() => { logoTaps = 0; }, 1200);
+    if (logoTaps >= 3) { logoTaps = 0; clearTimeout(logoTapTimer); promptOwner(); }
+  }
 
   function loadIdentity() {
     try {
@@ -53,6 +62,7 @@
      =======================================================================*/
   function go(route) {
     view.route = route;
+    if (route === "owner") localStorage.setItem("ug_owner_auth", "1");
     localStorage.setItem("ug_route", route);
     if (route === "owner" && !ownerSeen) {
       const st = Store.get();
@@ -106,45 +116,6 @@
   }
 
   /* =======================================================================
-     מסך בחירת תפקיד
-     =======================================================================*/
-  function renderRole() {
-    const st = Store.get();
-    return `
-    <div class="screen active">
-      <div class="role-wrap">
-        <div class="role-hero">
-          <div class="rh-logo">${esc((st.shop.name || "מ")[0])}</div>
-          <h1>${esc(st.shop.name)}</h1>
-          <p>${esc(st.shop.tagline || "קביעת תורים אונליין")}</p>
-        </div>
-        <div class="role-cards">
-          <button class="role-card" data-act="enter-client">
-            <div class="rc-ico">🙍‍♂️</div>
-            <div class="rc-body">
-              <div class="rc-title">כניסת לקוח</div>
-              <div class="rc-sub">בחירת תור פנוי וקביעת תור</div>
-            </div>
-            <div class="rc-arrow">‹</div>
-          </button>
-          <button class="role-card" data-act="enter-owner">
-            <div class="rc-ico">✂️</div>
-            <div class="rc-body">
-              <div class="rc-title">כניסת בעל העסק</div>
-              <div class="rc-sub">ניהול יומן, שירותים ותורים</div>
-            </div>
-            <div class="rc-arrow">‹</div>
-          </button>
-        </div>
-        <div class="conn-line" style="justify-content:center;margin-top:26px">
-          <span class="conn-dot ${Store.mode === "cloud" ? "" : "local"}"></span>
-          ${Store.mode === "cloud" ? "מחובר לענן — סנכרון בין כל המכשירים" : "מצב מקומי — סנכרון במכשיר זה"}
-        </div>
-      </div>
-    </div>`;
-  }
-
-  /* =======================================================================
      כותרת עליונה משותפת
      =======================================================================*/
   function topbar(sub, opts) {
@@ -154,7 +125,7 @@
     return `
     <div class="topbar">
       <div class="brand">
-        <div class="logo-dot">${esc((st.shop.name || "מ")[0])}</div>
+        <div class="logo-dot" title="">${esc((st.shop.name || "מ")[0])}</div>
         <div class="titles">
           <h1>${esc(st.shop.name)}</h1>
           <p>${esc(sub)}</p>
@@ -162,7 +133,7 @@
       </div>
       <div class="spacer"></div>
       ${opts.bell ? `<button class="icon-btn" data-act="enable-notif" title="התראות">🔔${badge}</button>` : ""}
-      <button class="icon-btn" data-act="logout" title="החלפת תצוגה">⇋</button>
+      ${opts.switch ? `<button class="icon-btn" data-act="logout" title="חזרה לתצוגת לקוח">⇋</button>` : ""}
     </div>`;
   }
 
@@ -419,7 +390,7 @@
 
     return `
     <div class="screen active">
-      ${topbar("ניהול העסק", { bell: true })}
+      ${topbar("ניהול העסק", { bell: true, switch: true })}
       <div class="content" id="oscroll">${body}</div>
       <div class="tabbar">
         <button data-otab="cal" class="${view.ownerTab === "cal" ? "active" : ""}"><span class="tb-ico">🗓️</span>יומן</button>
@@ -618,11 +589,7 @@
      =======================================================================*/
   function render() {
     if (!Store.get()) return;
-    let html;
-    if (view.route === "role") html = renderRole();
-    else if (view.route === "owner") html = renderOwner();
-    else html = renderClient();
-    $("#root").innerHTML = html;
+    $("#root").innerHTML = view.route === "owner" ? renderOwner() : renderClient();
   }
 
   /* =======================================================================
@@ -630,6 +597,9 @@
      =======================================================================*/
   function wire() {
     document.addEventListener("click", async (e) => {
+      // כניסת מנהל נסתרת: 3 הקשות רצופות על הלוגו (בתצוגת לקוח בלבד)
+      if (e.target.closest(".logo-dot") && view.route === "client") { onLogoTap(); return; }
+
       const t = e.target.closest("[data-act],[data-svc],[data-day],[data-slot],[data-tab],[data-otab],[data-active]");
       if (!t) return;
 
@@ -644,9 +614,7 @@
       if (!act) return;
 
       switch (act) {
-        case "enter-client": go("client"); break;
-        case "enter-owner": promptOwner(); break;
-        case "logout": go("role"); break;
+        case "logout": go("client"); break;
         case "close-modal": closeModal(); break;
 
         case "open-confirm": openConfirm(); break;
@@ -694,20 +662,18 @@
   }
 
   function promptOwner() {
-    if (localStorage.getItem("ug_owner_auth") === "1") { go("owner"); return; }
     openModal(`
-      <div class="m-title">כניסת בעל העסק</div>
-      <div class="m-sub">הזינו את קוד הכניסה</div>
-      <div class="field"><input class="input" id="own-code" type="password" inputmode="numeric" placeholder="קוד" style="text-align:center;letter-spacing:4px;font-size:20px"></div>
+      <div class="m-title">כניסת מנהל</div>
+      <div class="m-sub">הזן סיסמה</div>
+      <div class="field"><input class="input" id="own-code" type="password" autocomplete="off" placeholder="סיסמה" style="text-align:center;font-size:18px"></div>
       <button class="btn btn-primary" data-act2="check-code">כניסה</button>
       <button class="btn btn-ghost" data-act="close-modal" style="margin-top:8px">ביטול</button>
     `);
     const check = () => {
-      const v = ($("#own-code") && $("#own-code").value.trim()) || "";
-      if (v === String(UG_CONFIG.ownerPasscode)) {
-        localStorage.setItem("ug_owner_auth", "1");
+      const v = ($("#own-code") && $("#own-code").value) || "";
+      if (v.trim() === String(UG_CONFIG.ownerPasscode)) {
         closeModal(); go("owner");
-      } else { toast("קוד שגוי", "", "🔒"); }
+      } else { toast("סיסמה שגויה", "", "🔒"); }
     };
     $("[data-act2='check-code']").addEventListener("click", check);
     $("#own-code").addEventListener("keydown", (e) => { if (e.key === "Enter") check(); });

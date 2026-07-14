@@ -92,6 +92,7 @@ a { color: var(--sky); text-decoration: none; }
   background: linear-gradient(145deg, var(--sky), var(--sky-strong));
   color: var(--sky-ink); font-weight: 800; font-size: 18px;
   box-shadow: var(--shadow-sky);
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
 }
 .topbar .titles { min-width: 0; }
 .topbar .titles h1 { font-size: 17px; font-weight: 800; letter-spacing: -.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
