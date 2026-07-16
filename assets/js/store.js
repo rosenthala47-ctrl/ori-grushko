@@ -118,6 +118,14 @@ UG.Store = (function () {
           if (snap.exists && !snap.metadata.hasPendingWrites) cb(snap.data());
         });
       },
+      // שמירת טוקן פוש (FCM) של מכשיר — לשליחת התראות גם כשהאפליקציה סגורה
+      saveToken(uid, token) {
+        return db.collection("pushTokens").doc(uid).set({
+          tokens: firebase.firestore.FieldValue.arrayUnion(token),
+          platform: (navigator.userAgent || "").slice(0, 120),
+          updatedAt: Date.now(),
+        }, { merge: true });
+      },
       // הזמנה בטוחה מפני התנגשות (טרנזקציה אטומית)
       transactBooking(build) {
         return db.runTransaction((tx) =>
@@ -336,6 +344,15 @@ UG.Store = (function () {
     await persist();
   }
 
+  /* ---------- טוקן פוש (FCM) ---------- */
+  async function savePushToken(userId, token, isOwner) {
+    if (!backend || backend.mode !== "cloud" || !backend.saveToken) return;
+    try {
+      await backend.saveToken(userId, token);
+      if (isOwner) await backend.saveToken("owner", token);
+    } catch (e) { console.warn("[UG] saveToken failed", e && e.message); }
+  }
+
   /* ---------- ביקורות ---------- */
   async function addReview(r) {
     refreshLocal();
@@ -361,7 +378,7 @@ UG.Store = (function () {
     init, subscribe, get,
     setDay, saveShop, upsertService, removeService,
     createBooking, setBookingStatus, setBlock,
-    joinWaitlist, leaveWaitlist, consumeAlert, addReview,
+    joinWaitlist, leaveWaitlist, consumeAlert, addReview, savePushToken,
     get mode() { return backend ? backend.mode : "local"; },
   };
 })();

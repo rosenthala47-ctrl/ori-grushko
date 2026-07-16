@@ -123,6 +123,10 @@ service cloud.firestore {
     match /shops/{doc} {
       allow read, write: if true;   // פשוט להתחלה. ראו הערת אבטחה למטה.
     }
+    match /pushTokens/{uid} {        // טוקני פוש למכשירים (רק לשליחת התראות)
+      allow write: if true;
+      allow read: if false;         // רק הפונקציה בשרת קוראת אותם
+    }
   }
 }
 ```
@@ -149,19 +153,49 @@ service cloud.firestore {
 ## 🗂️ מבנה הפרויקט
 
 ```
-index.html              — מעטפת העמוד
-config.js               — הגדרות (קוד בעלים, ברירות מחדל, Firebase)
-manifest.webmanifest    — הגדרות PWA
-sw.js                   — Service Worker (PWA + התראות)
+index.html                 — מעטפת העמוד
+config.js                  — הגדרות (סיסמת מנהל, ברירות מחדל, Firebase, VAPID)
+manifest.webmanifest       — הגדרות PWA
+sw.js                      — Service Worker (PWA + מטמון)
+firebase-messaging-sw.js   — Service Worker של FCM (פוש כשהאפליקציה סגורה)
 assets/
-  styles.css            — עיצוב (שחור/לבן/תכלת, RTL)
-  img/                  — אייקונים
+  styles.css               — עיצוב (שחור/לבן/תכלת, RTL)
+  img/                     — אייקונים
   js/
-    util.js             — עזרי תאריך/שעה
-    store.js            — שכבת הנתונים המשותפת (מקומי / Firebase) + זמן אמת
-    notify.js           — הרשאות והתראות פוש + תזכורות
-    app.js              — מסכים, תצוגה וחיווט
+    util.js                — עזרי תאריך/שעה + ולידציית טלפון
+    store.js               — שכבת הנתונים המשותפת (מקומי / Firebase) + זמן אמת
+    notify.js              — הרשאות והתראות מקומיות + תזכורות/דירוג
+    fcm.js                 — רישום המכשיר לפוש (FCM)
+    app.js                 — מסכים, תצוגה וחיווט
+functions/                 — Cloud Function ששולחת את הפוש (deploy נפרד)
+firebase.json / .firebaserc — הגדרות ל-Firebase CLI (deploy של הפונקציה)
 ```
+
+## 📳 התראות פוש גם כשהאפליקציה סגורה (FCM) — אופציונלי
+
+כברירת מחדל התראות (תזכורת, "התפנה תור", דירוג) מגיעות כשהאפליקציה פתוחה או
+ברקע. כדי שהתראה תגיע לטלפון **גם כשהאפליקציה סגורה לגמרי** (כמו וואטסאפ),
+צריך להפעיל Firebase Cloud Messaging + פונקציית שרת. שלבים חד-פעמיים:
+
+1. **תוכנית Blaze** — Firebase Console → ⚙️ → Usage and billing → שדרוג ל-Blaze
+   (יש מכסה חינמית נדיבה; שליחת התראות לעסק קטן בפועל לא עולה כסף).
+2. **מפתח VAPID** — Project Settings → Cloud Messaging → *Web Push certificates*
+   → **Generate key pair** → להעתיק את המפתח אל `config.js`, בשדה `vapidKey`.
+3. **חוקי Firestore** — לוודא שהחוקים כוללים גם את `pushTokens` (ראו למעלה).
+4. **פריסת הפונקציה** (מהמחשב, פעם אחת):
+   ```bash
+   npm install -g firebase-tools
+   firebase login
+   cd <תיקיית-הפרויקט>
+   firebase deploy --only functions
+   ```
+   > אם ה-deploy נכשל עם שגיאת region/location — פתחו את `functions/index.js`
+   > ושנו את `REGION` לאזור שבו נוצר ה-Firestore שלכם (מופיע ב-Console →
+   > Firestore Database), למשל `europe-west1` / `eur3` / `nam5`, ופרסו שוב.
+
+מאותו רגע: כשלקוח מבטל תור, מי שברשימת ההמתנה מקבל התראה לטלפון גם אם האפליקציה
+סגורה; וכשנקבע תור חדש — המנהל מקבל התראה. (באייפון נדרש iOS 16.4+ **והתקנה
+למסך הבית** כדי לקבל פוש ברקע.)
 
 ## 🛠️ הרצה מקומית לפיתוח
 

@@ -42,6 +42,13 @@
   }
   function saveIdentity() { localStorage.setItem("ug_identity", JSON.stringify(identity)); }
 
+  // רישום המכשיר לפוש (FCM) — כדי לקבל התראות גם כשהאפליקציה סגורה
+  function ensureFcm() {
+    if (UG.FCM && Notify.permission() === "granted") {
+      UG.FCM.start(identity.userId, view.route === "owner");
+    }
+  }
+
   /* =======================================================================
      טוסט ומודאל
      =======================================================================*/
@@ -70,6 +77,7 @@
       const st = Store.get();
       ownerSeen = new Set(st.bookings.map((b) => b.id)); // בסיס — לא להתריע על קיימים
     }
+    if (route === "owner") ensureFcm(); // רישום מכשיר המנהל לקבלת פוש על תור חדש
     render();
   }
 
@@ -484,11 +492,13 @@
     if (stale.length) await Store.consumeAlert(stale);
     // תזמון תזכורת + הצעה לאשר התראות
     if (Notify.permission() === "granted") {
+      ensureFcm();
       Notify.scheduleReminders(Store.get().bookings, identity.userId, Store.get().shop);
     } else if (Notify.supported() && Notify.permission() === "default") {
       const r = await Notify.requestPermission();
       if (r === "granted") {
         toast("התראות הופעלו — נזכיר לך לפני התור", "sky", "🔔");
+        ensureFcm();
         Notify.scheduleReminders(Store.get().bookings, identity.userId, Store.get().shop);
       }
     }
@@ -549,11 +559,12 @@
     });
     closeModal();
     toast("נכנסת לרשימת ההמתנה — נודיע אם יתפנה 🔔", "sky", "✅");
-    // ודא הרשאת התראות כדי שההודעה באמת תגיע
+    // ודא הרשאת התראות כדי שההודעה באמת תגיע (גם כשהאפליקציה סגורה)
     if (Notify.supported() && Notify.permission() === "default") {
       const r = await Notify.requestPermission();
       if (r === "granted") toast("התראות הופעלו ✓", "good", "🔔");
     }
+    ensureFcm();
     render();
   }
 
@@ -1146,6 +1157,7 @@
     const r = await Notify.requestPermission();
     if (r === "granted") {
       toast("התראות הופעלו ✓", "good", "🔔");
+      ensureFcm();
       const st = Store.get();
       if (view.route === "client") Notify.scheduleReminders(st.bookings, identity.userId, st.shop);
       render();
@@ -1249,7 +1261,8 @@
     Store.subscribe(onStoreChange);
     if (view.route === "owner" && localStorage.getItem("ug_owner_auth") !== "1") view.route = "client";
     render();
-    // תזמון תזכורות בעת עלייה
+    // תזמון תזכורות ורישום פוש בעת עלייה
+    ensureFcm();
     if (view.route === "client" && Notify.permission() === "granted") {
       Notify.scheduleReminders(Store.get().bookings, identity.userId, Store.get().shop);
     }

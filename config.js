@@ -39,4 +39,10 @@ window.UG_CONFIG = {
     appId: "1:92589759772:web:8fb918b085df403bbe2ed9",
     measurementId: "G-7JXW84Z5PW",
   },
+
+  /* מפתח Web Push (VAPID) — לשליחת התראות פוש גם כשהאפליקציה סגורה לגמרי (FCM).
+     איפה משיגים: Firebase Console → Project Settings → Cloud Messaging →
+     "Web Push certificates" → Generate key pair → להעתיק לכאן.
+     אם ריק — האפליקציה תשלח תזכורות רק כשהיא פתוחה/ברקע (כמו קודם). */
+  vapidKey: "",
 };
