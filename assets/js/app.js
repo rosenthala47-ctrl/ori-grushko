@@ -196,17 +196,86 @@
       </div>`;
   }
 
-  /* ---------- תצוגת תמונה מוגדלת ---------- */
+  /* ---------- תצוגת תמונה מוגדלת עם זום (צביטה / הקשה כפולה / כפתורים) ---------- */
   function openPhoto(id) {
     const p = Store.getGallery().find((x) => x.id === id);
     if (!p) return;
     openModal(`
       <div class="lightbox">
-        <img src="${p.dataUrl}" alt="${esc(p.caption || "")}">
+        <div class="lb-stage" id="lbStage">
+          <img src="${p.dataUrl}" alt="${esc(p.caption || "")}" id="lbImg" draggable="false">
+        </div>
         ${p.caption ? `<div class="lb-cap">${esc(p.caption)}</div>` : ""}
+        <div class="lb-zoom">
+          <button class="lb-zbtn" data-zoom="out" aria-label="הקטנה">−</button>
+          <button class="lb-zbtn" data-zoom="reset">איפוס</button>
+          <button class="lb-zbtn" data-zoom="in" aria-label="הגדלה">＋</button>
+        </div>
+        <div class="lb-hint">צביטה / הקשה כפולה כדי להגדיל</div>
       </div>
-      <button class="btn btn-ghost" data-act="close-modal" style="margin-top:12px">סגירה</button>
+      <button class="btn btn-ghost" data-act="close-modal" style="margin-top:10px">סגירה</button>
     `);
+    setupLightboxZoom();
+  }
+
+  function setupLightboxZoom() {
+    const stage = document.getElementById("lbStage");
+    const img = document.getElementById("lbImg");
+    if (!stage || !img) return;
+    let scale = 1, tx = 0, ty = 0, startDist = 0, startScale = 1, lastTap = 0;
+    const MIN = 1, MAX = 4;
+    const pts = new Map();
+
+    const apply = () => { img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`; };
+    function clampPan() {
+      const r = stage.getBoundingClientRect();
+      const maxX = Math.max(0, (img.clientWidth * scale - r.width) / 2);
+      const maxY = Math.max(0, (img.clientHeight * scale - r.height) / 2);
+      tx = Math.max(-maxX, Math.min(maxX, tx));
+      ty = Math.max(-maxY, Math.min(maxY, ty));
+    }
+    function setScale(s) {
+      scale = Math.max(MIN, Math.min(MAX, s));
+      if (scale <= 1.001) { scale = 1; tx = 0; ty = 0; }
+      clampPan(); apply();
+      stage.classList.toggle("zoomed", scale > 1);
+    }
+
+    stage.addEventListener("pointerdown", (e) => {
+      try { stage.setPointerCapture(e.pointerId); } catch (er) {}
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2) {
+        const a = [...pts.values()];
+        startDist = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+        startScale = scale;
+      } else if (pts.size === 1) {
+        const now = Date.now();
+        if (now - lastTap < 300) { setScale(scale > 1 ? 1 : 2.5); lastTap = 0; }
+        else lastTap = now;
+      }
+    });
+    stage.addEventListener("pointermove", (e) => {
+      if (!pts.has(e.pointerId)) return;
+      const prev = pts.get(e.pointerId);
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2 && startDist > 0) {
+        const a = [...pts.values()];
+        const d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+        setScale(startScale * (d / startDist));
+      } else if (pts.size === 1 && scale > 1) {
+        tx += e.clientX - prev.x; ty += e.clientY - prev.y; clampPan(); apply();
+      }
+    });
+    const up = (e) => { pts.delete(e.pointerId); if (pts.size < 2) startDist = 0; };
+    stage.addEventListener("pointerup", up);
+    stage.addEventListener("pointercancel", up);
+
+    document.querySelectorAll("[data-zoom]").forEach((b) => b.addEventListener("click", () => {
+      const k = b.dataset.zoom;
+      if (k === "in") setScale(scale + 0.6);
+      else if (k === "out") setScale(scale - 0.6);
+      else setScale(1);
+    }));
   }
 
   function notifBanner() {

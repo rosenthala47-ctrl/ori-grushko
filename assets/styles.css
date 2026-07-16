@@ -475,8 +475,25 @@ a.nav-btn { flex: 1; color: var(--text); text-decoration: none; }
 }
 .gphoto .gdel:active { background: var(--bad); }
 .lightbox { text-align: center; }
-.lightbox img { width: 100%; max-height: 66vh; object-fit: contain; border-radius: var(--radius-sm); }
-.lightbox .lb-cap { margin-top: 10px; font-size: 14.5px; color: var(--muted); }
+.lb-stage {
+  position: relative; width: 100%; height: 64vh; overflow: hidden;
+  border-radius: var(--radius-sm); background: #000; touch-action: none;
+  display: grid; place-items: center; cursor: zoom-in;
+}
+.lb-stage.zoomed { cursor: grab; }
+.lb-stage img {
+  max-width: 100%; max-height: 100%; object-fit: contain;
+  transform-origin: center center; will-change: transform;
+  user-select: none; -webkit-user-drag: none;
+}
+.lb-cap { margin-top: 10px; font-size: 14.5px; color: var(--muted); }
+.lb-zoom { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
+.lb-zbtn {
+  min-width: 52px; padding: 9px 16px; border-radius: 12px; font-weight: 800; font-size: 17px;
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--text);
+}
+.lb-zbtn:active { background: var(--surface-3); transform: scale(.96); }
+.lb-hint { margin-top: 9px; font-size: 12px; color: var(--muted-2); }
 
 /* ==== הודעת התקנה כאפליקציה (PWA) ==== */
 .install-bar {
