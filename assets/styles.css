@@ -448,6 +448,13 @@ a.nav-btn { flex: 1; color: var(--text); text-decoration: none; }
   border-top: 1px solid var(--line); border-bottom: none;
   font-weight: 800; padding: 12px 14px;
 }
+.stat-table .row-del {
+  width: 26px; height: 26px; border-radius: 8px; font-size: 12px;
+  color: var(--muted); background: var(--surface-3); border: 1px solid var(--line);
+  display: grid; place-items: center;
+}
+.stat-table .row-del:active { background: var(--bad-bg); color: var(--bad); border-color: rgba(248,113,113,.35); }
+.stat-table td:last-child { padding-inline: 8px; width: 34px; }
 
 /* ==== גלריית תספורות ==== */
 .gallery-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }

@@ -940,7 +940,7 @@
     const table = rows.length ? `
       <div class="card" style="padding:4px 0;overflow-x:auto">
         <table class="stat-table">
-          <thead><tr><th>תאריך</th><th>לקוח</th><th>שירות</th><th>שולם</th></tr></thead>
+          <thead><tr><th>תאריך</th><th>לקוח</th><th>שירות</th><th>שולם</th><th></th></tr></thead>
           <tbody>
             ${rows.map((x) => `
             <tr>
@@ -948,11 +948,13 @@
               <td class="st-name">${esc(x.b.userName || "לקוח")}</td>
               <td>${esc(x.b.serviceName)}</td>
               <td class="money">${u.fmtPrice(x.b.price)}</td>
+              <td><button class="row-del" data-act="del-report" data-id="${x.b.id}" aria-label="מחיקה">✕</button></td>
             </tr>`).join("")}
           </tbody>
           <tfoot><tr>
             <td colspan="3">סה״כ ${rows.length} תספורות</td>
             <td class="money">${u.fmtPrice(total)}</td>
+            <td></td>
           </tr></tfoot>
         </table>
       </div>` : emptyState("📊", "אין עדיין נתונים בחודש זה", "תספורת נכנסת לדוח ברגע שהלקוח מאשר הגעה");
@@ -1005,6 +1007,18 @@
         </div>` : ""}
       </div>
     `;
+  }
+
+  function confirmDeleteBooking(id) {
+    const b = Store.get().bookings.find((x) => x.id === id);
+    if (!b) return;
+    openModal(`
+      <div class="m-title">מחיקת רשומה מהדוח</div>
+      <div class="m-sub">${esc(b.userName || "לקוח")} · ${esc(b.serviceName)} · ${esc(u.longDate(b.date))}</div>
+      <p style="font-size:14px;color:var(--muted);margin:6px 0 20px">הרשומה תוסר מהדוח לצמיתות ולא ניתן יהיה לשחזר אותה.</p>
+      <button class="btn btn-danger" data-act="do-del-report" data-id="${id}">מחיקה</button>
+      <button class="btn btn-ghost" data-act="close-modal" style="margin-top:8px">ביטול</button>
+    `);
   }
 
   function ownerSettings(st) {
@@ -1159,6 +1173,12 @@
           });
           closeModal(); toast("תודה על הדירוג! ⭐", "good", "🙏"); render(); break;
         }
+
+        // מחיקת רשומה מהדוח
+        case "del-report": confirmDeleteBooking(t.dataset.id); break;
+        case "do-del-report":
+          await Store.deleteBooking(t.dataset.id); closeModal();
+          toast("הרשומה נמחקה מהדוח", "", "🗑️"); render(); break;
 
         // דוח חודשי
         case "stat-prev": view.statMonth = ymShift(view.statMonth || ymNow(), -1); render(); break;

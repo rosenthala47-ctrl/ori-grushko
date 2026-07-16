@@ -410,6 +410,13 @@ UG.Store = (function () {
     await persist();
   }
 
+  // מחיקת רשומת תור לצמיתות (לניקוי הדוח)
+  async function deleteBooking(id) {
+    refreshLocal();
+    state.bookings = state.bookings.filter((b) => b.id !== id);
+    await persist();
+  }
+
   // סימון/ביטול חסימה של שעה (בעלים)
   async function setBlock(dateKey, time, blocked) {
     if (backend.mode === "local") { const latest = backend.read(); if (latest) state = latest; }
@@ -424,7 +431,7 @@ UG.Store = (function () {
   return {
     init, subscribe, get,
     setDay, saveShop, upsertService, removeService,
-    createBooking, setBookingStatus, setBlock,
+    createBooking, setBookingStatus, setBlock, deleteBooking,
     joinWaitlist, leaveWaitlist, consumeAlert, addReview, savePushToken,
     subscribeGallery, getGallery, addPhoto, removePhoto,
     get mode() { return backend ? backend.mode : "local"; },
