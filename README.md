@@ -167,35 +167,34 @@ assets/
     notify.js              — הרשאות והתראות מקומיות + תזכורות/דירוג
     fcm.js                 — רישום המכשיר לפוש (FCM)
     app.js                 — מסכים, תצוגה וחיווט
-functions/                 — Cloud Function ששולחת את הפוש (deploy נפרד)
-firebase.json / .firebaserc — הגדרות ל-Firebase CLI (deploy של הפונקציה)
+.github/
+  workflows/push-notify.yml — GitHub Action ששולחת פוש כל כמה דקות (חינם)
+  scripts/send-push.js       — סקריפט השליחה (FCM דרך service account)
 ```
 
-## 📳 התראות פוש גם כשהאפליקציה סגורה (FCM) — אופציונלי
+## 📳 התראות פוש גם כשהאפליקציה סגורה (FCM) — חינם, ללא כרטיס אשראי
 
 כברירת מחדל התראות (תזכורת, "התפנה תור", דירוג) מגיעות כשהאפליקציה פתוחה או
-ברקע. כדי שהתראה תגיע לטלפון **גם כשהאפליקציה סגורה לגמרי** (כמו וואטסאפ),
-צריך להפעיל Firebase Cloud Messaging + פונקציית שרת. שלבים חד-פעמיים:
+ברקע. כדי שהתראה תגיע לטלפון **גם כשהאפליקציה סגורה לגמרי**, מנגנון ב-GitHub
+Actions (בתיקייה `.github/`) בודק את מסד הנתונים כל כמה דקות ושולח את ההתראות
+דרך FCM. הכל בחינם, ללא תוכנית Blaze וללא כרטיס אשראי. הגדרה חד-פעמית:
 
-1. **תוכנית Blaze** — Firebase Console → ⚙️ → Usage and billing → שדרוג ל-Blaze
-   (יש מכסה חינמית נדיבה; שליחת התראות לעסק קטן בפועל לא עולה כסף).
-2. **מפתח VAPID** — Project Settings → Cloud Messaging → *Web Push certificates*
-   → **Generate key pair** → להעתיק את המפתח אל `config.js`, בשדה `vapidKey`.
-3. **חוקי Firestore** — לוודא שהחוקים כוללים גם את `pushTokens` (ראו למעלה).
-4. **פריסת הפונקציה** (מהמחשב, פעם אחת):
-   ```bash
-   npm install -g firebase-tools
-   firebase login
-   cd <תיקיית-הפרויקט>
-   firebase deploy --only functions
-   ```
-   > אם ה-deploy נכשל עם שגיאת region/location — פתחו את `functions/index.js`
-   > ושנו את `REGION` לאזור שבו נוצר ה-Firestore שלכם (מופיע ב-Console →
-   > Firestore Database), למשל `europe-west1` / `eur3` / `nam5`, ופרסו שוב.
+1. **מפתח VAPID** — Firebase Console → Project Settings → Cloud Messaging →
+   *Web Push certificates* → **Generate key pair** → להעתיק אל `config.js`
+   בשדה `vapidKey`.
+2. **חוקי Firestore** — לוודא שהחוקים כוללים גם את `pushTokens` (ראו למעלה).
+3. **מפתח Service Account** — Project Settings → *Service accounts* →
+   **Generate new private key** → יורד קובץ JSON.
+4. **הוספת המפתח כ-Secret ב-GitHub** — במאגר: Settings → Secrets and variables
+   → Actions → **New repository secret** → שם: `FIREBASE_SERVICE_ACCOUNT`,
+   ערך: כל תוכן קובץ ה-JSON. (ה-secret מוצפן ואינו נחשף בקוד.)
 
-מאותו רגע: כשלקוח מבטל תור, מי שברשימת ההמתנה מקבל התראה לטלפון גם אם האפליקציה
-סגורה; וכשנקבע תור חדש — המנהל מקבל התראה. (באייפון נדרש iOS 16.4+ **והתקנה
-למסך הבית** כדי לקבל פוש ברקע.)
+זהו. ה-workflow רץ כל 5 דקות (וניתן להרצה ידנית מלשונית **Actions**). כשלקוח
+מבטל תור — מי שברשימת ההמתנה מקבל פוש; כשנקבע תור חדש — המנהל מקבל פוש. ההודעה
+מגיעה תוך כמה דקות (לא מיידית — זו הפשרה של הפתרון החינמי).
+
+> באייפון פוש לאפליקציה סגורה עובד מ-iOS 16.4 ומעלה, **ורק אם האפליקציה
+> מותקנת למסך הבית**. באנדרואיד עובד תמיד.
 
 ## 🛠️ הרצה מקומית לפיתוח
 
