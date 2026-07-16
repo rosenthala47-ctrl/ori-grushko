@@ -15,7 +15,7 @@ window.UG_CONFIG = {
     shopName: "אורי גרושקו",
     tagline: "מספרה · עיצוב שיער",
     phone: "",
-    address: "",
+    address: "רבי טרפון 12, ירושלים",
     slotStep: 45,          // מרווח בין תורים (דקות) — למשל כל 45 דקות
     reminderMinutes: 60,   // כמה זמן לפני התור נשלחת תזכורת
   },

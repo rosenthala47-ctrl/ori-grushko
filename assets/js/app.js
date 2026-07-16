@@ -17,6 +17,7 @@
     selDate: null,       // יום נבחר בצד הלקוח
     selSlot: null,
     oDate: null,         // יום נבחר בצד הבעלים (תצוגת יומן)
+    statMonth: null,     // חודש נבחר בדוח ("YYYY-MM")
   };
   let ownerSeen = null;     // Set של מזהי תורים שהבעלים כבר ראה (זיהוי תור חדש)
   let identity = loadIdentity();
@@ -128,7 +129,6 @@
   function topbar(sub, opts) {
     opts = opts || {};
     const st = Store.get();
-    const badge = opts.badge ? `<span class="badge-count">${opts.badge}</span>` : "";
     return `
     <div class="topbar">
       <div class="brand">
@@ -139,7 +139,6 @@
         </div>
       </div>
       <div class="spacer"></div>
-      ${opts.bell ? `<button class="icon-btn" data-act="enable-notif" title="התראות">🔔${badge}</button>` : ""}
       ${opts.switch ? `<button class="icon-btn" data-act="logout" title="חזרה לתצוגת לקוח">⇋</button>` : ""}
     </div>`;
   }
@@ -156,7 +155,7 @@
     const body = view.clientTab === "book" ? clientBook(st, activeServices) : clientMine(st);
     return `
     <div class="screen active">
-      ${topbar("קביעת תור", { bell: true })}
+      ${topbar("קביעת תור", {})}
       <div class="content" id="cscroll">${body}</div>
       <div class="tabbar">
         <button data-tab="book" class="${view.clientTab === "book" ? "active" : ""}">
@@ -245,19 +244,24 @@
       slotsHtml = emptyState("⌛", "אין תורים פנויים", "כל התורים ליום זה תפוסים או שהיום הסתיים");
     } else {
       slotsHtml = `<div class="slots-grid">` + allSlots.map((s) => {
-        if (s.booking) return `<div class="slot taken">${s.start}<span class="slot-tag">תפוס</span></div>`;
+        if (s.booking) {
+          const inList = (st.waitlist || []).some((w) =>
+            w.userId === identity.userId && w.date === view.selDate && w.start === s.start);
+          return `<button class="slot taken ${inList ? "inlist" : ""}" data-wait="${view.selDate}|${s.start}">${s.start}<span class="slot-tag">${inList ? "ברשימה ✓" : "תפוס · המתנה"}</span></button>`;
+        }
         return `<button class="slot ${view.selSlot === s.start ? "selected" : ""}" data-slot="${s.start}">${s.start}</button>`;
       }).join("") + `</div>`;
     }
 
-    const canBook = service && view.selSlot && !!$;
     const ctaLabel = view.selSlot
       ? `קביעת תור · ${esc(view.selSlot)} ${esc(u.relativeDay(view.selDate))}`
       : "בחרו שעה לתור";
 
     return `
+      ${alertBanner(st)}
       ${notifBanner()}
       ${arrivalBanner(st)}
+      ${reviewBanner(st)}
       <div class="section-title">בחירת שירות</div>
       <div class="svc-select">${svcCards}</div>
 
@@ -269,7 +273,77 @@
 
       <div style="height:14px"></div>
       <button class="btn btn-primary" data-act="open-confirm" ${view.selSlot ? "" : "disabled"}>${ctaLabel}</button>
+
+      ${mapsCard(st)}
     `;
+  }
+
+  /* ---------- באנר "התפנה תור" (רשימת המתנה) ---------- */
+  function alertBanner(st) {
+    const now = Date.now();
+    const mine = (st.alerts || [])
+      .filter((a) => a.userId === identity.userId && u.dateTime(a.date, a.start).getTime() > now)
+      .sort((a, z) => u.dateTime(a.date, a.start) - u.dateTime(z.date, z.start))[0];
+    if (!mine) return "";
+    return `
+    <div class="banner sky pulse">
+      <span class="bn-ico">🎉</span>
+      <div class="bn-body">
+        <div class="bn-title">התפנה תור ${esc(u.relativeDay(mine.date))} בשעה ${esc(mine.start)}!</div>
+        <div class="bn-sub">מהרו להזמין לפני שמישהו אחר יתפוס</div>
+      </div>
+      <div class="bn-actions">
+        <button class="btn btn-primary btn-sm" data-act="alert-book" data-id="${mine.id}" data-date="${mine.date}" data-start="${mine.start}">הזמן עכשיו</button>
+        <button class="btn btn-ghost btn-sm" data-act="alert-dismiss" data-id="${mine.id}">לא עכשיו</button>
+      </div>
+    </div>`;
+  }
+
+  /* ---------- באנר בקשת דירוג אחרי תספורת ---------- */
+  function reviewBanner(st) {
+    const skip = new Set(JSON.parse(localStorage.getItem("ug_review_skip") || "[]"));
+    const reviewed = new Set((st.reviews || []).filter((r) => r.userId === identity.userId).map((r) => r.bookingId));
+    const now = Date.now();
+    const b = st.bookings
+      .filter((x) => x.userId === identity.userId && x.status !== "cancelled")
+      .map((x) => ({ x, end: u.dateTime(x.date, x.end).getTime() }))
+      .filter((o) => o.end < now && now - o.end < 14 * 86400000 && !reviewed.has(o.x.id) && !skip.has(o.x.id))
+      .sort((a, z) => z.end - a.end)[0];
+    if (!b) return "";
+    return `
+    <div class="banner good">
+      <span class="bn-ico">⭐</span>
+      <div class="bn-body">
+        <div class="bn-title">איך הייתה התספורת?</div>
+        <div class="bn-sub">${esc(b.x.serviceName)} · נשמח לדירוג וביקורת קצרה</div>
+      </div>
+      <div class="bn-actions">
+        <button class="btn btn-primary btn-sm" data-act="open-review" data-id="${b.x.id}">דרג</button>
+        <button class="btn btn-ghost btn-sm" data-act="review-skip" data-id="${b.x.id}">אולי אחר כך</button>
+      </div>
+    </div>`;
+  }
+
+  /* ---------- כרטיס "איך מגיעים" ---------- */
+  function mapsCard(st) {
+    const addr = (st.shop.address || "").trim();
+    if (!addr) return "";
+    const q = encodeURIComponent(addr);
+    return `
+      <div class="section-title">📍 איך מגיעים?</div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:13px">
+          <div style="width:44px;height:44px;border-radius:12px;flex:none;display:grid;place-items:center;background:var(--surface-3);font-size:21px">🗺️</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:15px">${esc(addr)}</div>
+            <div class="hint" style="margin-top:1px">לחצו לפתיחת ניווט</div>
+          </div>
+        </div>
+        <div class="btn-row" style="margin-top:13px">
+          <a class="btn btn-sm nav-btn" target="_blank" rel="noopener" href="https://waze.com/ul?q=${q}&navigate=yes">🚗 Waze</a>
+          <a class="btn btn-sm nav-btn" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${q}">🗺️ Google Maps</a>
+        </div>
+      </div>`;
   }
 
   function clientMine(st) {
@@ -280,9 +354,14 @@
       .sort((a, z) => a.ts - z.ts);
     const upcoming = mine.filter((x) => x.ts > now - 60 * 60000);
     const past = mine.filter((x) => x.ts <= now - 60 * 60000).reverse();
+    const myWaits = (st.waitlist || [])
+      .filter((w) => w.userId === identity.userId)
+      .map((w) => ({ w, ts: u.dateTime(w.date, w.start).getTime() }))
+      .sort((a, z) => a.ts - z.ts);
 
-    if (!mine.length) {
-      return emptyState("🎟️", "אין לך תורים", "עברו ל״קביעת תור״ כדי לקבוע את התור הראשון");
+    if (!mine.length && !myWaits.length) {
+      return alertBanner(st) + reviewBanner(st) +
+        emptyState("🎟️", "אין לך תורים", "עברו ל״קביעת תור״ כדי לקבוע את התור הראשון");
     }
     const card = (x, isPast) => {
       const b = x.b;
@@ -310,9 +389,25 @@
         ${actions}
       </div>`;
     };
-    let html = "";
+    let html = alertBanner(st) + reviewBanner(st);
     if (upcoming.length) {
       html += `<div class="section-title">תורים קרובים</div>` + upcoming.map((x) => card(x, false)).join("");
+    }
+    if (myWaits.length) {
+      html += `<div class="section-title">רשימת המתנה 🔔</div>` + myWaits.map((x) => `
+      <div class="card" style="padding:13px 15px">
+        <div class="booking" style="padding:0;border:none;background:none">
+          <div class="bk-time">
+            <div class="bt-h">${esc(x.w.start)}</div>
+            <div class="bt-d">${esc(u.relativeDay(x.w.date))}</div>
+          </div>
+          <div class="bk-body">
+            <div class="bk-title">ממתין שיתפנה</div>
+            <div class="bk-sub">${esc(u.longDate(x.w.date))} · נודיע לך ברגע שהתור יתפנה</div>
+          </div>
+          <button class="btn btn-sm btn-danger" data-act="leave-wait" data-id="${x.w.id}">הסר</button>
+        </div>
+      </div>`).join("");
     }
     if (past.length) {
       html += `<div class="section-title">היסטוריה</div>` + past.map((x) => card(x, true)).join("");
@@ -347,21 +442,29 @@
     `);
   }
 
-  async function doBook() {
+  /* קריאת שדות איש קשר מהמודאל + ולידציה (שם פרטי, משפחה, טלפון תקין) */
+  function readContact() {
     const first = ($("#cf-first") && $("#cf-first").value.trim()) || "";
     const last = ($("#cf-last") && $("#cf-last").value.trim()) || "";
     const phoneRaw = ($("#cf-phone") && $("#cf-phone").value.trim()) || "";
-    if (!first) { toast("נא להזין שם פרטי", "", "✋"); return; }
-    if (!last) { toast("נא להזין שם משפחה", "", "✋"); return; }
-    if (!u.isValidPhone(phoneRaw)) { toast("מספר טלפון לא תקין", "", "📵"); return; }
+    if (!first) { toast("נא להזין שם פרטי", "", "✋"); return null; }
+    if (!last) { toast("נא להזין שם משפחה", "", "✋"); return null; }
+    if (!u.isValidPhone(phoneRaw)) { toast("מספר טלפון לא תקין", "", "📵"); return null; }
     const phone = u.fmtPhone(phoneRaw);
     const name = first + " " + last;
     identity.firstName = first; identity.lastName = last; identity.name = name; identity.phone = phone;
     saveIdentity();
+    return { first, last, phone, name };
+  }
+
+  async function doBook() {
+    const contact = readContact();
+    if (!contact) return;
+    const bookedDate = view.selDate, bookedStart = view.selSlot;
     const btn = $("[data-act='do-book']"); if (btn) { btn.disabled = true; btn.textContent = "קובע תור…"; }
     const res = await Store.createBooking({
-      serviceId: view.selService, date: view.selDate, start: view.selSlot,
-      userId: identity.userId, userName: name, phone,
+      serviceId: view.selService, date: bookedDate, start: bookedStart,
+      userId: identity.userId, userName: contact.name, phone: contact.phone,
     });
     if (!res.ok) {
       closeModal();
@@ -374,6 +477,11 @@
     view.selSlot = null;
     view.clientTab = "mine";
     toast("התור נקבע בהצלחה!", "good", "🎉");
+    // אם ההזמנה הגיעה מהתראת "התפנה תור" — נקה את ההתראה
+    const stale = (Store.get().alerts || [])
+      .filter((a) => a.userId === identity.userId && a.date === bookedDate && a.start === bookedStart)
+      .map((a) => a.id);
+    if (stale.length) await Store.consumeAlert(stale);
     // תזמון תזכורת + הצעה לאשר התראות
     if (Notify.permission() === "granted") {
       Notify.scheduleReminders(Store.get().bookings, identity.userId, Store.get().shop);
@@ -385,6 +493,117 @@
       }
     }
     render();
+  }
+
+  /* ---------- מודאל רשימת המתנה ---------- */
+  function openWaitlist(dateKey, start) {
+    const st = Store.get();
+    const mine = (st.waitlist || []).find((w) =>
+      w.userId === identity.userId && w.date === dateKey && w.start === start);
+    if (mine) {
+      openModal(`
+        <div class="m-title">אתם ברשימת ההמתנה 🔔</div>
+        <div class="m-sub">לשעה ${esc(start)}, ${esc(u.longDate(dateKey))}</div>
+        <p style="font-size:14px;color:var(--muted);margin-bottom:18px">אם התור יתפנה — תקבלו הודעה מיד ותוכלו להזמין אותו לפני כולם.</p>
+        <button class="btn btn-danger" data-act="leave-wait" data-id="${mine.id}">יציאה מרשימת ההמתנה</button>
+        <button class="btn btn-ghost" data-act="close-modal" style="margin-top:8px">סגור</button>
+      `);
+      return;
+    }
+    openModal(`
+      <div class="m-title">השעה תפוסה — רשימת המתנה</div>
+      <div class="m-sub">אם התור יתפנה, נודיע לכם מיד ותוכלו לתפוס אותו</div>
+      <div class="summary-row"><span class="sr-k">תאריך</span><span class="sr-v">${esc(u.longDate(dateKey))}</span></div>
+      <div class="summary-row"><span class="sr-k">שעה</span><span class="sr-v">${esc(start)}</span></div>
+      <div style="height:16px"></div>
+      <div class="field-row">
+        <div class="field"><label>שם פרטי</label>
+          <input class="input" id="cf-first" placeholder="שם פרטי" value="${esc(identity.firstName || "")}"></div>
+        <div class="field"><label>שם משפחה</label>
+          <input class="input" id="cf-last" placeholder="שם משפחה" value="${esc(identity.lastName || "")}"></div>
+      </div>
+      <div class="field"><label>טלפון נייד</label>
+        <input class="input" id="cf-phone" type="tel" inputmode="tel" placeholder="050-0000000" value="${esc(identity.phone)}"></div>
+      <button class="btn btn-primary" data-act="join-wait" data-key="${dateKey}|${start}">🔔 הצטרפות לרשימת ההמתנה</button>
+      <button class="btn btn-ghost" data-act="close-modal" style="margin-top:8px">ביטול</button>
+      <p class="hint">חשוב: כדי לקבל את ההודעה כשיתפנה תור — אשרו קבלת התראות.</p>
+    `);
+  }
+
+  async function doJoinWait(key) {
+    const contact = readContact();
+    if (!contact) return;
+    const [dateKey, start] = key.split("|");
+    // אם בינתיים השעה התפנתה — הצע להזמין ישר
+    const freeNow = gridSlots(dateKey).some((s) => s.start === start && !s.booking && !s.blocked && !s.past);
+    if (freeNow) {
+      closeModal();
+      view.selDate = dateKey; view.selSlot = start; view.clientTab = "book";
+      toast("השעה התפנתה הרגע — אפשר להזמין!", "good", "🎉");
+      render(); openConfirm();
+      return;
+    }
+    await Store.joinWaitlist({
+      date: dateKey, start,
+      userId: identity.userId, userName: contact.name, phone: contact.phone,
+    });
+    closeModal();
+    toast("נכנסת לרשימת ההמתנה — נודיע אם יתפנה 🔔", "sky", "✅");
+    // ודא הרשאת התראות כדי שההודעה באמת תגיע
+    if (Notify.supported() && Notify.permission() === "default") {
+      const r = await Notify.requestPermission();
+      if (r === "granted") toast("התראות הופעלו ✓", "good", "🔔");
+    }
+    render();
+  }
+
+  /* ---------- מודאל דירוג וביקורת ---------- */
+  function openReview(bookingId) {
+    const st = Store.get();
+    const b = st.bookings.find((x) => x.id === bookingId);
+    if (!b) return;
+    openModal(`
+      <div class="m-title">דירוג התספורת ⭐</div>
+      <div class="m-sub">${esc(b.serviceName)} · ${esc(u.longDate(b.date))}</div>
+      <div class="stars" id="rv-stars">
+        ${[1, 2, 3, 4, 5].map((n) => `<button class="star on" data-star="${n}">★</button>`).join("")}
+      </div>
+      <div class="field" style="margin-top:16px"><label>ביקורת (לא חובה)</label>
+        <textarea class="input" id="rv-text" rows="3" placeholder="ספרו לנו איך היה…"></textarea></div>
+      <button class="btn btn-primary" data-act="send-review" data-id="${b.id}">שליחת הדירוג</button>
+      <button class="btn btn-ghost" data-act="close-modal" style="margin-top:8px">ביטול</button>
+    `);
+    let rating = 5;
+    const wrap = $("#rv-stars");
+    const paint = () => [...wrap.children].forEach((c, i) => c.classList.toggle("on", i < rating));
+    wrap.addEventListener("click", (e) => {
+      const s = e.target.closest("[data-star]"); if (!s) return;
+      rating = Number(s.dataset.star); paint();
+    });
+    $("#modal").__rating = () => rating;
+  }
+
+  /* ---------- התראת מערכת חד-פעמית על "התפנה תור" ---------- */
+  function notifyAlerts(st) {
+    let seen;
+    try { seen = new Set(JSON.parse(localStorage.getItem("ug_alerts_seen") || "[]")); }
+    catch (e) { seen = new Set(); }
+    let changed = false;
+    (st.alerts || [])
+      .filter((a) => a.userId === identity.userId && u.dateTime(a.date, a.start).getTime() > Date.now())
+      .forEach((a) => {
+        if (seen.has(a.id)) return;
+        seen.add(a.id); changed = true;
+        Notify.show(
+          "🎉 התפנה תור!",
+          `${u.relativeDay(a.date)} בשעה ${a.start} — היכנסו מהר להזמין לפני שייתפס`,
+          { tag: "freed-" + a.id }
+        );
+        if (view.route === "client") toast(`התפנה תור ${u.relativeDay(a.date)} בשעה ${a.start}!`, "sky", "🎉");
+      });
+    if (changed) {
+      try { localStorage.setItem("ug_alerts_seen", JSON.stringify([...seen].slice(-100))); } catch (e) {}
+    }
   }
 
   /* =======================================================================
@@ -400,6 +619,7 @@
     else if (view.ownerTab === "hours") body = ownerHours(st);
     else if (view.ownerTab === "services") body = ownerServices(st);
     else if (view.ownerTab === "bookings") body = ownerBookings(st);
+    else if (view.ownerTab === "report") body = ownerReport(st);
     else body = ownerSettings(st);
 
     const upcomingCount = st.bookings.filter((b) =>
@@ -407,7 +627,7 @@
 
     return `
     <div class="screen active">
-      ${topbar("ניהול העסק", { bell: true, switch: true })}
+      ${topbar("ניהול העסק", { switch: true })}
       <div class="content" id="oscroll">${body}</div>
       <div class="tabbar">
         <button data-otab="cal" class="${view.ownerTab === "cal" ? "active" : ""}"><span class="tb-ico">🗓️</span>יומן</button>
@@ -415,6 +635,7 @@
         <button data-otab="services" class="${view.ownerTab === "services" ? "active" : ""}"><span class="tb-ico">✂️</span>שירותים</button>
         <button data-otab="bookings" class="${view.ownerTab === "bookings" ? "active" : ""}">
           <span class="tb-ico" style="position:relative">🎟️${upcomingCount ? `<span class="badge-count" style="inset-inline-start:auto;inset-inline-end:-10px;top:-6px">${upcomingCount}</span>` : ""}</span>תורים</button>
+        <button data-otab="report" class="${view.ownerTab === "report" ? "active" : ""}"><span class="tb-ico">📊</span>דוח</button>
         <button data-otab="settings" class="${view.ownerTab === "settings" ? "active" : ""}"><span class="tb-ico">⚙️</span>הגדרות</button>
       </div>
     </div>`;
@@ -615,6 +836,75 @@
     return html;
   }
 
+  /* ---------- דוח חודשי (מנהל בלבד) ---------- */
+  const HEB_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
+  function ymNow() { const d = new Date(); return d.getFullYear() + "-" + u.pad(d.getMonth() + 1); }
+  function ymShift(ym, delta) {
+    const [y, m] = ym.split("-").map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    return d.getFullYear() + "-" + u.pad(d.getMonth() + 1);
+  }
+  function ymLabel(ym) { const [y, m] = ym.split("-").map(Number); return HEB_MONTHS[m - 1] + " " + y; }
+
+  function ownerReport(st) {
+    if (!view.statMonth) view.statMonth = ymNow();
+    const ym = view.statMonth;
+    const isCur = ym === ymNow();
+    const rows = st.bookings
+      .filter((b) => b.status === "confirmed" && b.date.startsWith(ym))
+      .map((b) => ({ b, ts: u.dateTime(b.date, b.start).getTime() }))
+      .sort((a, z) => a.ts - z.ts);
+    const total = rows.reduce((s, x) => s + Number(x.b.price || 0), 0);
+
+    const table = rows.length ? `
+      <div class="card" style="padding:4px 0;overflow-x:auto">
+        <table class="stat-table">
+          <thead><tr><th>תאריך</th><th>לקוח</th><th>שירות</th><th>שולם</th></tr></thead>
+          <tbody>
+            ${rows.map((x) => `
+            <tr>
+              <td class="st-date">${Number(x.b.date.slice(8, 10))}.${Number(x.b.date.slice(5, 7))} · ${esc(x.b.start)}</td>
+              <td class="st-name">${esc(x.b.userName || "לקוח")}</td>
+              <td>${esc(x.b.serviceName)}</td>
+              <td class="money">${u.fmtPrice(x.b.price)}</td>
+            </tr>`).join("")}
+          </tbody>
+          <tfoot><tr>
+            <td colspan="3">סה״כ ${rows.length} תספורות</td>
+            <td class="money">${u.fmtPrice(total)}</td>
+          </tr></tfoot>
+        </table>
+      </div>` : emptyState("📊", "אין עדיין נתונים בחודש זה", "תספורת נכנסת לדוח ברגע שהלקוח מאשר הגעה");
+
+    const reviews = (st.reviews || []).slice().sort((a, z) => (z.createdAt || 0) - (a.createdAt || 0));
+    const avg = reviews.length ? (reviews.reduce((s, r) => s + Number(r.rating || 0), 0) / reviews.length).toFixed(1) : null;
+    const revHtml = reviews.length ? reviews.slice(0, 20).map((r) => `
+      <div class="card" style="padding:13px 15px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <b style="font-size:14.5px">${esc(r.userName || "לקוח")}</b>
+          <span class="rev-stars">${"★".repeat(Number(r.rating) || 0)}<span class="dim">${"★".repeat(5 - (Number(r.rating) || 0))}</span></span>
+        </div>
+        ${r.text ? `<p style="font-size:13.5px;color:var(--muted);margin-top:6px;line-height:1.5">${esc(r.text)}</p>` : ""}
+        ${r.serviceName ? `<div class="hint" style="margin-top:6px">${esc(r.serviceName)}</div>` : ""}
+      </div>`).join("") : `<p class="hint" style="margin-top:4px">אין עדיין ביקורות — לקוחות מתבקשים לדרג אחרי כל תספורת.</p>`;
+
+    return `
+      <div class="month-nav">
+        <button class="icon-btn" data-act="stat-prev" title="חודש קודם">‹</button>
+        <div class="mn-label">${ymLabel(ym)}</div>
+        <button class="icon-btn" data-act="stat-next" title="חודש הבא" ${isCur ? "disabled" : ""}>›</button>
+      </div>
+      <div class="stat-chips">
+        <div class="stat-chip"><div class="sc-num">${rows.length}</div><div class="sc-lbl">תספורות שאושרו</div></div>
+        <div class="stat-chip"><div class="sc-num">${u.fmtPrice(total)}</div><div class="sc-lbl">הכנסות החודש</div></div>
+      </div>
+      ${table}
+      <p class="hint">הדוח מציג תורים שהלקוח אישר בהם הגעה. בתחילת כל חודש הטבלה מתחילה מאפס — אפשר לדפדף לחודשים קודמים עם החצים.</p>
+      <div class="section-title">ביקורות לקוחות${avg ? ` · ממוצע ${avg} ★` : ""}</div>
+      ${revHtml}
+    `;
+  }
+
   function ownerSettings(st) {
     return `
       <div class="section-title">פרטי העסק</div>
@@ -623,6 +913,8 @@
           <input class="input" id="set-name" value="${esc(st.shop.name)}"></div>
         <div class="field"><label>תיאור קצר</label>
           <input class="input" id="set-tag" value="${esc(st.shop.tagline || "")}"></div>
+        <div class="field"><label>כתובת המספרה (לכפתור ״איך מגיעים״)</label>
+          <input class="input" id="set-addr" value="${esc(st.shop.address || "")}" placeholder="רבי טרפון 12, ירושלים"></div>
         <div class="field-row">
           <div class="field"><label>טלפון</label>
             <input class="input" id="set-phone" type="tel" value="${esc(st.shop.phone || "")}"></div>
@@ -682,12 +974,13 @@
       // כניסת מנהל נסתרת: 3 הקשות רצופות על הלוגו (בתצוגת לקוח בלבד)
       if (e.target.closest(".logo-dot") && view.route === "client") { onLogoTap(); return; }
 
-      const t = e.target.closest("[data-act],[data-svc],[data-day],[data-oday],[data-slot],[data-tab],[data-otab],[data-active]");
+      const t = e.target.closest("[data-act],[data-svc],[data-day],[data-oday],[data-slot],[data-wait],[data-tab],[data-otab],[data-active]");
       if (!t) return;
 
       // בורר שירות
       if (t.dataset.svc) { view.selService = t.dataset.svc; view.selSlot = null; render(); return; }
       if (t.dataset.slot) { view.selSlot = t.dataset.slot; render(); return; }
+      if (t.dataset.wait) { const [dk, tm] = t.dataset.wait.split("|"); openWaitlist(dk, tm); return; }
       if (t.dataset.day && t.classList.contains("day-chip")) { view.selDate = t.dataset.day; view.selSlot = null; render(); return; }
       if (t.dataset.oday) { view.oDate = t.dataset.oday; render(); return; }
       if (t.dataset.tab) { view.clientTab = t.dataset.tab; render(); return; }
@@ -715,6 +1008,56 @@
         case "enable-notif": handleEnableNotif(); break;
         case "install-app": doInstall(); break;
         case "install-dismiss": suppressInstall(3); hideInstallBar(); break;
+
+        // רשימת המתנה
+        case "join-wait": doJoinWait(t.dataset.key); break;
+        case "leave-wait":
+          await Store.leaveWaitlist(t.dataset.id); closeModal();
+          toast("הוסרת מרשימת ההמתנה", "", "🔕"); render(); break;
+
+        // התראת "התפנה תור"
+        case "alert-book": {
+          const { id, date, start } = t.dataset;
+          view.clientTab = "book"; view.selDate = date;
+          const free = gridSlots(date).some((s) => s.start === start && !s.booking && !s.blocked && !s.past);
+          if (free) {
+            view.selSlot = start; render(); openConfirm();
+          } else {
+            view.selSlot = null; render();
+            toast("השעה נתפסה שוב — אפשר לחזור לרשימת ההמתנה", "", "😕");
+            await Store.consumeAlert(id);
+          }
+          break;
+        }
+        case "alert-dismiss": await Store.consumeAlert(t.dataset.id); render(); break;
+
+        // דירוג וביקורת
+        case "open-review": openReview(t.dataset.id); break;
+        case "review-skip": {
+          let skip; try { skip = JSON.parse(localStorage.getItem("ug_review_skip") || "[]"); } catch (e2) { skip = []; }
+          skip.push(t.dataset.id);
+          localStorage.setItem("ug_review_skip", JSON.stringify(skip.slice(-100)));
+          render(); break;
+        }
+        case "send-review": {
+          const rating = $("#modal").__rating ? $("#modal").__rating() : 5;
+          const text = ($("#rv-text") && $("#rv-text").value.trim()) || "";
+          const bk = Store.get().bookings.find((x) => x.id === t.dataset.id);
+          await Store.addReview({
+            bookingId: t.dataset.id, userId: identity.userId,
+            userName: identity.name || "לקוח", serviceName: bk ? bk.serviceName : "",
+            rating, text,
+          });
+          closeModal(); toast("תודה על הדירוג! ⭐", "good", "🙏"); render(); break;
+        }
+
+        // דוח חודשי
+        case "stat-prev": view.statMonth = ymShift(view.statMonth || ymNow(), -1); render(); break;
+        case "stat-next": {
+          const next = ymShift(view.statMonth || ymNow(), 1);
+          if (next <= ymNow()) view.statMonth = next;
+          render(); break;
+        }
 
         // שירותים
         case "add-svc": svcModal(null); break;
@@ -785,6 +1128,7 @@
     await Store.saveShop({
       name: $("#set-name").value.trim() || "המספרה",
       tagline: $("#set-tag").value.trim(),
+      address: $("#set-addr").value.trim(),
       phone: $("#set-phone").value.trim(),
       slotStep: Number($("#set-step").value),
       reminderMinutes: Number($("#set-remind").value),
@@ -884,6 +1228,8 @@
     } else if (ownerSeen) {
       st.bookings.forEach((b) => ownerSeen.add(b.id));
     }
+    // התראת "התפנה תור" לממתינים ברשימת ההמתנה
+    notifyAlerts(st);
     // תזמון תזכורות ללקוח
     if (view.route === "client" && Notify.permission() === "granted") {
       Notify.scheduleReminders(st.bookings, identity.userId, st.shop);

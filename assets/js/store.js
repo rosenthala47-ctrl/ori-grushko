@@ -38,6 +38,9 @@ UG.Store = (function () {
       ],
       bookings: [],
       blocks: [],            // שעות שהבעלים סימן כלא-פנויות: "YYYY-MM-DD|HH:MM"
+      waitlist: [],          // רשימת המתנה לשעות תפוסות
+      alerts: [],            // "התפנה תור" — התראות ממתינות למשתמשים
+      reviews: [],           // דירוגים וביקורות של לקוחות
       updatedAt: Date.now(),
     };
   }
@@ -54,6 +57,14 @@ UG.Store = (function () {
     if (!Array.isArray(s.services)) s.services = base.services;
     if (!Array.isArray(s.bookings)) s.bookings = [];
     if (!Array.isArray(s.blocks)) s.blocks = [];
+    if (!Array.isArray(s.waitlist)) s.waitlist = [];
+    if (!Array.isArray(s.alerts)) s.alerts = [];
+    if (!Array.isArray(s.reviews)) s.reviews = [];
+    if (!s.shop.address) s.shop.address = base.shop.address;
+    // ניקוי רשומות שפג תוקפן (שעת התור כבר עברה)
+    const nowTs = Date.now();
+    s.waitlist = s.waitlist.filter((w) => u.dateTime(w.date, w.start).getTime() > nowTs);
+    s.alerts = s.alerts.filter((a) => u.dateTime(a.date, a.start).getTime() > nowTs);
     // מעבר למודל של מרווחי 45 דק׳ — נרמול ערכים ישנים
     if (![30, 45, 60].includes(Number(s.shop.slotStep))) s.shop.slotStep = 45;
     s.version = 1;
@@ -249,11 +260,90 @@ UG.Store = (function () {
     return res;
   }
 
-  async function setBookingStatus(id, status) {
+  /* האם משבצת ברשת השעות פנויה כרגע להזמנה */
+  function isSlotFree(cur, dateKey, start) {
+    const dow = u.parseKey(dateKey).getDay();
+    const sched = cur.schedule[dow];
+    if (!sched || !sched.active) return false;
+    const step = cur.shop.slotStep || 45;
+    const t = u.toMin(start), end = t + step;
+    if (t < u.toMin(sched.open) || end > u.toMin(sched.close)) return false;
+    if ((cur.blocks || []).includes(dateKey + "|" + start)) return false;
+    if (u.dateTime(dateKey, start).getTime() <= Date.now()) return false;
+    return !cur.bookings.some((b) =>
+      b.status !== "cancelled" && b.date === dateKey &&
+      t < u.toMin(b.end) && end > u.toMin(b.start));
+  }
+
+  /* תור בוטל → אם יש ממתינים לשעה שהתפנתה, יוצרים להם התראת "התפנה תור" */
+  function processFreed(cur, booking) {
+    const created = [];
+    (cur.waitlist || []).forEach((w) => {
+      if (w.date !== booking.date) return;
+      if (isSlotFree(cur, w.date, w.start)) {
+        created.push({
+          id: u.uid(), userId: w.userId, userName: w.userName,
+          date: w.date, start: w.start, createdAt: Date.now(),
+        });
+      }
+    });
+    if (created.length) {
+      const freed = new Set(created.map((a) => a.userId + "|" + a.date + "|" + a.start));
+      cur.waitlist = cur.waitlist.filter((w) => !freed.has(w.userId + "|" + w.date + "|" + w.start));
+      cur.alerts = (cur.alerts || []).concat(created);
+    }
+  }
+
+  function refreshLocal() {
     if (backend.mode === "local") { const latest = backend.read(); if (latest) state = latest; }
+  }
+
+  async function setBookingStatus(id, status) {
+    refreshLocal();
     const b = state.bookings.find((x) => x.id === id);
-    if (b) { b.status = status; await persist(); }
+    if (b) {
+      b.status = status;
+      if (status === "cancelled") processFreed(state, b);
+      await persist();
+    }
     return b;
+  }
+
+  /* ---------- רשימת המתנה ---------- */
+  async function joinWaitlist(data) {
+    refreshLocal();
+    state.waitlist = state.waitlist || [];
+    const dup = state.waitlist.some((w) =>
+      w.userId === data.userId && w.date === data.date && w.start === data.start);
+    if (!dup) {
+      state.waitlist.push({
+        id: u.uid(), date: data.date, start: data.start,
+        userId: data.userId, userName: data.userName, phone: data.phone || "",
+        createdAt: Date.now(),
+      });
+      await persist();
+    }
+  }
+  async function leaveWaitlist(id) {
+    refreshLocal();
+    state.waitlist = (state.waitlist || []).filter((w) => w.id !== id);
+    await persist();
+  }
+  async function consumeAlert(ids) {
+    refreshLocal();
+    const set = new Set(Array.isArray(ids) ? ids : [ids]);
+    state.alerts = (state.alerts || []).filter((a) => !set.has(a.id));
+    await persist();
+  }
+
+  /* ---------- ביקורות ---------- */
+  async function addReview(r) {
+    refreshLocal();
+    state.reviews = state.reviews || [];
+    const i = state.reviews.findIndex((x) => x.bookingId === r.bookingId && x.userId === r.userId);
+    if (i >= 0) state.reviews[i] = Object.assign({}, state.reviews[i], r, { updatedAt: Date.now() });
+    else state.reviews.push(Object.assign({ id: u.uid(), createdAt: Date.now() }, r));
+    await persist();
   }
 
   // סימון/ביטול חסימה של שעה (בעלים)
@@ -271,6 +361,7 @@ UG.Store = (function () {
     init, subscribe, get,
     setDay, saveShop, upsertService, removeService,
     createBooking, setBookingStatus, setBlock,
+    joinWaitlist, leaveWaitlist, consumeAlert, addReview,
     get mode() { return backend ? backend.mode : "local"; },
   };
 })();

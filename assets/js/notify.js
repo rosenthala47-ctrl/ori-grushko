@@ -68,25 +68,45 @@ UG.Notify = (function () {
       .filter((b) => b.userId === userId && b.status !== "cancelled")
       .forEach((b) => {
         const apptTs = u.dateTime(b.date, b.start).getTime();
-        if (apptTs <= now) return;                          // תור שכבר עבר
-        const remindTs = apptTs - reminderMin * 60000;
-        const fireId = b.id + ":" + b.start;
-        if (fired.has(fireId)) return;
-        // חלון תזמון: מקסימום ~24 שעות קדימה (מגבלת setTimeout/סבירות)
-        let delay = remindTs - now;
-        if (delay < 0) delay = apptTs - now > 2 * 60000 ? 1500 : -1; // עבר זמן התזכורת אך התור עוד רחוק → הזכר מיד
-        if (delay < 0 || delay > 24 * 3600 * 1000) return;
+        const endTs = u.dateTime(b.date, b.end).getTime();
 
-        const label = u.relativeDay(b.date);
-        const t = setTimeout(() => {
-          show(
-            "⏰ תזכורת לתספורת",
-            `${b.serviceName} ${label} בשעה ${b.start} · ${shop.name}`,
-            { tag: "reminder-" + b.id }
-          );
-          markFired(fireId);
-        }, delay);
-        timers.set(b.id, t);
+        // 1) תזכורת לפני התור
+        if (apptTs > now) {
+          const remindTs = apptTs - reminderMin * 60000;
+          const fireId = b.id + ":" + b.start;
+          if (!fired.has(fireId)) {
+            // חלון תזמון: מקסימום ~24 שעות קדימה (מגבלת setTimeout/סבירות)
+            let delay = remindTs - now;
+            if (delay < 0) delay = apptTs - now > 2 * 60000 ? 1500 : -1; // עבר זמן התזכורת אך התור עוד רחוק → הזכר מיד
+            if (delay >= 0 && delay <= 24 * 3600 * 1000) {
+              const label = u.relativeDay(b.date);
+              const t = setTimeout(() => {
+                show(
+                  "⏰ תזכורת לתספורת",
+                  `${b.serviceName} ${label} בשעה ${b.start} · ${shop.name}`,
+                  { tag: "reminder-" + b.id }
+                );
+                markFired(fireId);
+              }, delay);
+              timers.set("rem-" + b.id, t);
+            }
+          }
+        }
+
+        // 2) בקשת דירוג בסיום התספורת
+        const askTs = endTs + 5 * 60000;
+        const revId = "rev:" + b.id;
+        if (!fired.has(revId) && askTs > now && askTs - now <= 24 * 3600 * 1000) {
+          const t2 = setTimeout(() => {
+            show(
+              "⭐ איך הייתה התספורת?",
+              `נשמח אם תדרגו את ה${b.serviceName} ותכתבו ביקורת קצרה · ${shop.name}`,
+              { tag: "review-" + b.id }
+            );
+            markFired(revId);
+          }, askTs - now);
+          timers.set("rev-" + b.id, t2);
+        }
       });
   }
 
