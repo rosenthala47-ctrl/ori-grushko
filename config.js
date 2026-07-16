@@ -44,5 +44,5 @@ window.UG_CONFIG = {
      איפה משיגים: Firebase Console → Project Settings → Cloud Messaging →
      "Web Push certificates" → Generate key pair → להעתיק לכאן.
      אם ריק — האפליקציה תשלח תזכורות רק כשהיא פתוחה/ברקע (כמו קודם). */
-  vapidKey: "",
+  vapidKey: "BGkGsIAeOaXpzKZI16P919WEnnQN7gU4vtYxBGsgUdsB4ym5hOoy1qbenQSyn5hZH2yesWaymlGJOAsHblyYG-U",
 };
