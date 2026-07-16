@@ -160,7 +160,10 @@
     if (!view.selService || !activeServices.find((s) => s.id === view.selService)) {
       view.selService = activeServices[0] ? activeServices[0].id : null;
     }
-    const body = view.clientTab === "book" ? clientBook(st, activeServices) : clientMine(st);
+    let body;
+    if (view.clientTab === "gallery") body = clientGallery();
+    else if (view.clientTab === "mine") body = clientMine(st);
+    else body = clientBook(st, activeServices);
     return `
     <div class="screen active">
       ${topbar("קביעת תור", {})}
@@ -168,10 +171,42 @@
       <div class="tabbar">
         <button data-tab="book" class="${view.clientTab === "book" ? "active" : ""}">
           <span class="tb-ico">🗓️</span>קביעת תור</button>
+        <button data-tab="gallery" class="${view.clientTab === "gallery" ? "active" : ""}">
+          <span class="tb-ico">🖼️</span>גלריה</button>
         <button data-tab="mine" class="${view.clientTab === "mine" ? "active" : ""}">
           <span class="tb-ico">🎟️</span>התורים שלי</button>
       </div>
     </div>`;
+  }
+
+  /* ---------- גלריה (תצוגת לקוח) ---------- */
+  function clientGallery() {
+    const photos = Store.getGallery();
+    if (!photos.length) {
+      return emptyState("🖼️", "הגלריה בקרוב", "בעל העסק עדיין לא העלה תמונות של תספורות");
+    }
+    return `
+      <div class="section-title">גלריית תספורות</div>
+      <div class="gallery-grid">
+        ${photos.map((p) => `
+          <button class="gphoto" data-photo="${p.id}">
+            <img src="${p.dataUrl}" alt="${esc(p.caption || "תספורת")}" loading="lazy">
+            ${p.caption ? `<span class="gcap">${esc(p.caption)}</span>` : ""}
+          </button>`).join("")}
+      </div>`;
+  }
+
+  /* ---------- תצוגת תמונה מוגדלת ---------- */
+  function openPhoto(id) {
+    const p = Store.getGallery().find((x) => x.id === id);
+    if (!p) return;
+    openModal(`
+      <div class="lightbox">
+        <img src="${p.dataUrl}" alt="${esc(p.caption || "")}">
+        ${p.caption ? `<div class="lb-cap">${esc(p.caption)}</div>` : ""}
+      </div>
+      <button class="btn btn-ghost" data-act="close-modal" style="margin-top:12px">סגירה</button>
+    `);
   }
 
   function notifBanner() {
@@ -503,6 +538,41 @@
       }
     }
     render();
+  }
+
+  /* ---------- העלאת תמונה לגלריה (דחיסה בצד הלקוח) ---------- */
+  function compressImage(file, maxDim, quality) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let w = img.naturalWidth, h = img.naturalHeight;
+        const scale = Math.min(1, maxDim / Math.max(w, h));
+        w = Math.round(w * scale); h = Math.round(h * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        let q = quality, out = canvas.toDataURL("image/jpeg", q);
+        while (out.length > 900000 && q > 0.4) { q -= 0.1; out = canvas.toDataURL("image/jpeg", q); }
+        resolve(out);
+      };
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+
+  async function handleUpload(file) {
+    if (!file || !file.type || file.type.indexOf("image/") !== 0) { toast("נא לבחור קובץ תמונה", "", "🖼️"); return; }
+    toast("מעלה תמונה…", "sky", "⏳");
+    try {
+      const dataUrl = await compressImage(file, 1100, 0.72);
+      await Store.addPhoto(dataUrl, "");
+      toast("התמונה נוספה לגלריה ✓", "good", "🖼️");
+      render();
+    } catch (e) {
+      toast("לא הצלחנו להעלות את התמונה", "", "⚠️");
+    }
   }
 
   /* ---------- מודאל רשימת המתנה ---------- */
@@ -916,8 +986,30 @@
     `;
   }
 
+  function ownerGallerySection() {
+    const photos = Store.getGallery();
+    return `
+      <div class="section-title">🖼️ גלריית תספורות (${photos.length})</div>
+      <div class="card">
+        <label class="btn btn-primary" style="cursor:pointer;margin:0">
+          ＋ העלאת תמונה
+          <input type="file" accept="image/*" data-gfile style="display:none">
+        </label>
+        <p class="hint">התמונות שתעלה מוצגות ללקוחות בלשונית ״גלריה״. מומלץ תמונות מאוזנות/מאונכות ברורות.</p>
+        ${photos.length ? `<div class="gallery-grid" style="margin-top:14px">
+          ${photos.map((p) => `
+            <div class="gphoto">
+              <img src="${p.dataUrl}" loading="lazy">
+              <button class="gdel" data-delphoto="${p.id}" aria-label="מחיקה">✕</button>
+            </div>`).join("")}
+        </div>` : ""}
+      </div>
+    `;
+  }
+
   function ownerSettings(st) {
     return `
+      ${ownerGallerySection()}
       <div class="section-title">פרטי העסק</div>
       <div class="card">
         <div class="field"><label>שם העסק</label>
@@ -985,8 +1077,14 @@
       // כניסת מנהל נסתרת: 3 הקשות רצופות על הלוגו (בתצוגת לקוח בלבד)
       if (e.target.closest(".logo-dot") && view.route === "client") { onLogoTap(); return; }
 
-      const t = e.target.closest("[data-act],[data-svc],[data-day],[data-oday],[data-slot],[data-wait],[data-tab],[data-otab],[data-active]");
+      const t = e.target.closest("[data-act],[data-svc],[data-day],[data-oday],[data-slot],[data-wait],[data-photo],[data-delphoto],[data-tab],[data-otab],[data-active]");
       if (!t) return;
+
+      if (t.dataset.photo) { openPhoto(t.dataset.photo); return; }
+      if (t.dataset.delphoto !== undefined) {
+        Store.removePhoto(t.dataset.delphoto).then(() => { toast("התמונה נמחקה", "", "🗑️"); render(); });
+        return;
+      }
 
       // בורר שירות
       if (t.dataset.svc) { view.selService = t.dataset.svc; view.selSlot = null; render(); return; }
@@ -1088,6 +1186,11 @@
     // יומן בעלים — מתגי הפעלה ושעות
     document.addEventListener("change", async (e) => {
       const a = e.target;
+      if (a.dataset.gfile !== undefined && a.type === "file") {
+        if (a.files && a.files[0]) handleUpload(a.files[0]);
+        a.value = "";
+        return;
+      }
       if (a.dataset.block !== undefined && a.type === "checkbox") {
         // מתג פנוי/לא-פנוי ליד שעה (checked = פנוי)
         const [dk, time] = a.dataset.block.split("|");
@@ -1114,8 +1217,9 @@
       <button class="btn btn-ghost" data-act="close-modal" style="margin-top:8px">ביטול</button>
     `);
     const check = () => {
-      const v = ($("#own-code") && $("#own-code").value) || "";
-      if (v.trim() === String(UG_CONFIG.ownerPasscode)) {
+      const v = (($("#own-code") && $("#own-code").value) || "").trim();
+      const codes = [UG_CONFIG.ownerPasscode].concat(UG_CONFIG.ownerPasscodesExtra || []).map(String);
+      if (codes.includes(v)) {
         closeModal(); go("owner");
       } else { toast("סיסמה שגויה", "", "🔒"); }
     };
@@ -1259,6 +1363,12 @@
     initInstall();
     await Store.init();
     Store.subscribe(onStoreChange);
+    Store.subscribeGallery(() => {
+      // רענון כשמסתכלים על גלריה ולא באמצע הקלדה
+      const onGalleryView = (view.route === "client" && view.clientTab === "gallery") ||
+        (view.route === "owner" && view.ownerTab === "settings");
+      if (onGalleryView && !isEditingRoot()) render();
+    });
     if (view.route === "owner" && localStorage.getItem("ug_owner_auth") !== "1") view.route = "client";
     render();
     // תזמון תזכורות ורישום פוש בעת עלייה

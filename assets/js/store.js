@@ -14,6 +14,8 @@ UG.Store = (function () {
   let state = null;
   let backend = null;
   const subs = new Set();
+  let galleryCache = [];
+  const gallerySubs = new Set();
 
   /* ---------- מצב ברירת מחדל ---------- */
   function defaultState() {
@@ -74,9 +76,25 @@ UG.Store = (function () {
   /* =======================================================================
      Backend מקומי
      =======================================================================*/
+  const GKEY = "ug_gallery_v1";
   function LocalBackend() {
     let bc = null;
     try { bc = new BroadcastChannel("ug_barber"); } catch (e) {}
+    const listeners = { state: [], gallery: [] };
+    if (bc) bc.onmessage = (ev) => {
+      const t = ev && ev.data && ev.data.t;
+      if (t === "gallery") listeners.gallery.forEach((fn) => fn());
+      else listeners.state.forEach((fn) => fn());
+    };
+    window.addEventListener("storage", (e) => {
+      if (e.key === KEY) listeners.state.forEach((fn) => fn());
+      if (e.key === GKEY) listeners.gallery.forEach((fn) => fn());
+    });
+    function readG() { try { return JSON.parse(localStorage.getItem(GKEY) || "[]"); } catch (e) { return []; } }
+    function writeG(list) {
+      try { localStorage.setItem(GKEY, JSON.stringify(list)); } catch (e) {}
+      try { if (bc) bc.postMessage({ t: "gallery" }); } catch (e) {}
+    }
     return {
       mode: "local",
       read() {
@@ -91,10 +109,12 @@ UG.Store = (function () {
         try { if (bc) bc.postMessage({ t: "sync", at: s.updatedAt }); } catch (e) {}
         return Promise.resolve();
       },
-      onRemote(cb) {
-        if (bc) bc.onmessage = () => cb();
-        window.addEventListener("storage", (e) => { if (e.key === KEY) cb(); });
-      },
+      onRemote(cb) { listeners.state.push(cb); },
+      // גלריה
+      readGallery() { return readG(); },
+      onGallery(cb) { listeners.gallery.push(cb); },
+      addPhoto(p) { const l = readG(); l.unshift(Object.assign({ id: u.uid() }, p)); writeG(l); return Promise.resolve(); },
+      removePhoto(id) { writeG(readG().filter((x) => x.id !== id)); return Promise.resolve(); },
     };
   }
 
@@ -118,6 +138,15 @@ UG.Store = (function () {
           if (snap.exists && !snap.metadata.hasPendingWrites) cb(snap.data());
         });
       },
+      // גלריה — נשמרת כמסמכים בקולקציית shops (מכוסה ע״י אותם חוקי גישה)
+      onGallery(cb) {
+        db.collection("shops").where("type", "==", "photo").onSnapshot(
+          (snap) => cb(snap.docs.map((d) => Object.assign({ id: d.id }, d.data()))),
+          (err) => console.warn("[UG] gallery listen:", err && err.message)
+        );
+      },
+      addPhoto(p) { return db.collection("shops").add(Object.assign({ type: "photo" }, p)); },
+      removePhoto(id) { return db.collection("shops").doc(id).delete(); },
       // שמירת טוקן פוש (FCM) של מכשיר — לשליחת התראות גם כשהאפליקציה סגורה
       saveToken(uid, token) {
         return db.collection("pushTokens").doc(uid).set({
@@ -196,9 +225,27 @@ UG.Store = (function () {
       state = await bootBackend(backend);
     }
     backend.onRemote((remote) => reloadFromRemote(remote));
+    // גלריה
+    if (backend.onGallery) backend.onGallery((list) => reloadGallery(list));
+    reloadGallery();
     emit();
     return state;
   }
+
+  /* ---------- גלריה ---------- */
+  function emitGallery() { gallerySubs.forEach((fn) => { try { fn(galleryCache); } catch (e) {} }); }
+  function reloadGallery(list) {
+    if (list) galleryCache = list;
+    else if (backend && backend.readGallery) galleryCache = backend.readGallery();
+    galleryCache = (galleryCache || []).slice().sort((a, z) => (z.createdAt || 0) - (a.createdAt || 0));
+    emitGallery();
+  }
+  function subscribeGallery(fn) { gallerySubs.add(fn); fn(galleryCache); return () => gallerySubs.delete(fn); }
+  function getGallery() { return galleryCache; }
+  async function addPhoto(dataUrl, caption) {
+    if (backend.addPhoto) { await backend.addPhoto({ dataUrl: dataUrl, caption: caption || "", createdAt: Date.now() }); reloadGallery(); }
+  }
+  async function removePhoto(id) { if (backend.removePhoto) { await backend.removePhoto(id); reloadGallery(); } }
 
   function subscribe(fn) { subs.add(fn); if (state) fn(state); return () => subs.delete(fn); }
   function get() { return state; }
@@ -379,6 +426,7 @@ UG.Store = (function () {
     setDay, saveShop, upsertService, removeService,
     createBooking, setBookingStatus, setBlock,
     joinWaitlist, leaveWaitlist, consumeAlert, addReview, savePushToken,
+    subscribeGallery, getGallery, addPhoto, removePhoto,
     get mode() { return backend ? backend.mode : "local"; },
   };
 })();

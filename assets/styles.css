@@ -449,6 +449,28 @@ a.nav-btn { flex: 1; color: var(--text); text-decoration: none; }
   font-weight: 800; padding: 12px 14px;
 }
 
+/* ==== גלריית תספורות ==== */
+.gallery-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.gphoto {
+  position: relative; padding: 0; border-radius: var(--radius-sm); overflow: hidden;
+  aspect-ratio: 1 / 1; background: var(--surface-2); border: 1px solid var(--line);
+}
+.gphoto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gphoto .gcap {
+  position: absolute; inset-inline: 0; bottom: 0; padding: 12px 10px 8px;
+  font-size: 12px; font-weight: 600; color: #fff; text-align: start;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .72));
+}
+.gphoto .gdel {
+  position: absolute; top: 6px; inset-inline-end: 6px; width: 28px; height: 28px;
+  border-radius: 9px; background: rgba(10, 12, 16, .72); color: #fff; font-size: 14px;
+  display: grid; place-items: center; border: 1px solid rgba(255, 255, 255, .18);
+}
+.gphoto .gdel:active { background: var(--bad); }
+.lightbox { text-align: center; }
+.lightbox img { width: 100%; max-height: 66vh; object-fit: contain; border-radius: var(--radius-sm); }
+.lightbox .lb-cap { margin-top: 10px; font-size: 14.5px; color: var(--muted); }
+
 /* ==== הודעת התקנה כאפליקציה (PWA) ==== */
 .install-bar {
   position: fixed; z-index: 90; inset-inline: 0;
