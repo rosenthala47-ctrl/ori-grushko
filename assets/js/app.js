@@ -1582,6 +1582,7 @@
      אתחול
      =======================================================================*/
   async function boot() {
+    setupBackGuard();   // מלכודת "אחורה" — להפעיל מיד, לפני טעינת הענן
     Notify.registerSW();
     wire();
     initInstall();
@@ -1595,7 +1596,6 @@
     });
     if (view.route === "owner" && localStorage.getItem("ug_owner_auth") !== "1") view.route = "client";
     render();
-    setupBackGuard();
     // תזמון תזכורות ורישום פוש בעת עלייה
     ensureFcm();
     if (view.route === "client" && Notify.permission() === "granted") {
