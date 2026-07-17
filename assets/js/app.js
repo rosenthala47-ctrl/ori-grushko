@@ -50,6 +50,115 @@
   }
 
   /* =======================================================================
+     ניווט "אחורה" חכם — מחזיר למסך הקודם, ובדף הבית שואל אם לצאת
+     =======================================================================*/
+  const viewStack = [];
+  function snapView() {
+    return { route: view.route, clientTab: view.clientTab, ownerTab: view.ownerTab,
+      selDate: view.selDate, oDate: view.oDate, statMonth: view.statMonth };
+  }
+  function restoreSnap(s) {
+    view.route = s.route; view.clientTab = s.clientTab; view.ownerTab = s.ownerTab;
+    if (s.selDate) view.selDate = s.selDate;
+    if (s.oDate) view.oDate = s.oDate;
+    if (s.statMonth) view.statMonth = s.statMonth;
+    render();
+  }
+  function recordNav() { viewStack.push(snapView()); if (viewStack.length > 60) viewStack.shift(); }
+  function modalOpen() { const m = $("#modalBack"); return m && m.classList.contains("open"); }
+
+  function onPopState() {
+    try { history.pushState(null, ""); } catch (e) {}   // מלכודת מחדש כדי לא לצאת
+    if (modalOpen()) { closeModal(); return; }
+    if (viewStack.length) { restoreSnap(viewStack.pop()); return; }
+    showExitConfirm();
+  }
+  function setupBackGuard() {
+    try { history.pushState(null, ""); } catch (e) {}
+    window.addEventListener("popstate", onPopState);
+  }
+  function showExitConfirm() {
+    openModal(`
+      <div class="m-title">יציאה מהאפליקציה</div>
+      <div class="m-sub">להישאר או לצאת?</div>
+      <div style="height:12px"></div>
+      <button class="btn btn-primary" data-act="stay">הישארות באפליקציה</button>
+      <button class="btn btn-danger" data-act="do-exit" style="margin-top:8px">יציאה</button>
+    `);
+  }
+  function performExit() {
+    closeModal();
+    window.removeEventListener("popstate", onPopState);
+    try { history.go(-2); } catch (e) {}
+  }
+
+  /* =======================================================================
+     הוספה ליומן (קובץ .ics עם תזכורת שעה לפני)
+     =======================================================================*/
+  function icsDate(d) {
+    const p = (n) => String(n).padStart(2, "0");
+    return d.getUTCFullYear() + p(d.getUTCMonth() + 1) + p(d.getUTCDate()) + "T" +
+      p(d.getUTCHours()) + p(d.getUTCMinutes()) + "00Z";
+  }
+  function addToCalendar(id) {
+    const st = Store.get();
+    const b = st.bookings.find((x) => x.id === id);
+    if (!b) return;
+    const esc2 = (s) => String(s == null ? "" : s).replace(/([,;\\])/g, "\\$1").replace(/\n/g, "\\n");
+    const start = u.dateTime(b.date, b.start), end = u.dateTime(b.date, b.end);
+    const lines = [
+      "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//ori-grushko//HE", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+      "BEGIN:VEVENT",
+      "UID:" + b.id + "@ori-grushko",
+      "DTSTAMP:" + icsDate(new Date()),
+      "DTSTART:" + icsDate(start),
+      "DTEND:" + icsDate(end),
+      "SUMMARY:" + esc2(b.serviceName + " — " + st.shop.name),
+      "DESCRIPTION:" + esc2("תור ל" + b.serviceName + " · " + u.fmtPrice(b.price)),
+      st.shop.address ? "LOCATION:" + esc2(st.shop.address) : "",
+      "BEGIN:VALARM", "TRIGGER:-PT60M", "ACTION:DISPLAY", "DESCRIPTION:" + esc2("תזכורת לתספורת"), "END:VALARM",
+      "END:VEVENT", "END:VCALENDAR",
+    ].filter(Boolean);
+    const blob = new Blob([lines.join("\r\n")], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "tor-" + b.date + ".ics";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast("נפתח קובץ להוספה ליומן 📅", "sky", "📅");
+  }
+
+  /* =======================================================================
+     שיתוף עם חברים
+     =======================================================================*/
+  async function shareApp() {
+    const st = Store.get();
+    const url = location.href.split("#")[0];
+    const text = "קביעת תור למספרת " + st.shop.name + " 💈✂️";
+    try {
+      if (navigator.share) { await navigator.share({ title: st.shop.name, text: text, url: url }); return; }
+    } catch (e) { return; }
+    try {
+      if (navigator.clipboard) { await navigator.clipboard.writeText(text + " " + url); toast("הקישור הועתק — הדביקו בצ׳אט", "good", "🔗"); return; }
+    } catch (e) {}
+    window.open("https://wa.me/?text=" + encodeURIComponent(text + " " + url), "_blank");
+  }
+
+  /* ---------- כרטיס ביקורת (משותף למנהל וללקוח) ---------- */
+  function reviewCardHtml(r) {
+    const rating = Number(r.rating) || 0;
+    return `
+      <div class="card" style="padding:13px 15px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <b style="font-size:14.5px">${esc(r.userName || "לקוח")}</b>
+          <span class="rev-stars">${"★".repeat(rating)}<span class="dim">${"★".repeat(5 - rating)}</span></span>
+        </div>
+        ${r.text ? `<p style="font-size:13.5px;color:var(--muted);margin-top:6px;line-height:1.5">${esc(r.text)}</p>` : ""}
+        ${r.serviceName ? `<div class="hint" style="margin-top:6px">${esc(r.serviceName)}</div>` : ""}
+      </div>`;
+  }
+
+  /* =======================================================================
      טוסט ומודאל
      =======================================================================*/
   function toast(msg, kind, ico) {
@@ -70,6 +179,7 @@
      ראוטינג
      =======================================================================*/
   function go(route) {
+    if (view.route !== route) recordNav();
     view.route = route;
     if (route === "owner") localStorage.setItem("ug_owner_auth", "1");
     localStorage.setItem("ug_route", route);
@@ -179,13 +289,18 @@
     </div>`;
   }
 
-  /* ---------- גלריה (תצוגת לקוח) ---------- */
+  /* ---------- גלריה + ביקורות (תצוגת לקוח) ---------- */
   function clientGallery() {
     const photos = Store.getGallery();
-    if (!photos.length) {
-      return emptyState("🖼️", "הגלריה בקרוב", "בעל העסק עדיין לא העלה תמונות של תספורות");
+    const reviews = (Store.get().reviews || []).slice().sort((a, z) => (z.createdAt || 0) - (a.createdAt || 0));
+    const avg = reviews.length ? (reviews.reduce((s, r) => s + Number(r.rating || 0), 0) / reviews.length).toFixed(1) : null;
+
+    if (!photos.length && !reviews.length) {
+      return emptyState("🖼️", "הגלריה בקרוב", "בעל העסק עדיין לא העלה תמונות או ביקורות");
     }
-    return `
+    let html = "";
+    if (photos.length) {
+      html += `
       <div class="section-title">גלריית תספורות</div>
       <div class="gallery-grid">
         ${photos.map((p) => `
@@ -194,6 +309,11 @@
             ${p.caption ? `<span class="gcap">${esc(p.caption)}</span>` : ""}
           </button>`).join("")}
       </div>`;
+    }
+    html += `<div class="section-title">⭐ מה הלקוחות אומרים${avg ? ` · ${avg} מתוך 5` : ""}</div>`;
+    if (!reviews.length) html += `<p class="hint">אין עדיין ביקורות — היו הראשונים לדרג אחרי התספורת הבאה!</p>`;
+    else html += reviews.slice(0, 40).map((r) => reviewCardHtml(r)).join("");
+    return html;
   }
 
   /* ---------- תצוגת תמונה מוגדלת עם זום (צביטה / הקשה כפולה / כפתורים) ---------- */
@@ -387,7 +507,23 @@
       <button class="btn btn-primary" data-act="open-confirm" ${view.selSlot ? "" : "disabled"}>${ctaLabel}</button>
 
       ${mapsCard(st)}
+      ${shareCard()}
     `;
+  }
+
+  function shareCard() {
+    return `
+      <div class="section-title">📣 אהבתם? שתפו</div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:13px">
+          <div style="width:44px;height:44px;border-radius:12px;flex:none;display:grid;place-items:center;background:var(--surface-3);font-size:21px">💬</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:15px">שתפו את המספרה עם חברים</div>
+            <div class="hint" style="margin-top:1px">כמה שיותר תספורות טובות בעולם 😄</div>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-act="share-app" style="width:100%;margin-top:13px">🔗 שיתוף</button>
+      </div>`;
   }
 
   /* ---------- באנר "התפנה תור" (רשימת המתנה) ---------- */
@@ -483,7 +619,8 @@
       const actions = isPast ? "" : `
         <div class="btn-row" style="margin-top:12px">
           ${b.status !== "confirmed" ? `<button class="btn btn-sm" data-act="confirm-arrival" data-id="${b.id}">אשר הגעה</button>` : ""}
-          <button class="btn btn-sm btn-danger" data-act="cancel-booking" data-id="${b.id}">ביטול תור</button>
+          <button class="btn btn-sm" data-act="add-cal" data-id="${b.id}">📅 ליומן</button>
+          <button class="btn btn-sm btn-danger" data-act="cancel-booking" data-id="${b.id}">ביטול</button>
         </div>`;
       return `
       <div class="card" style="padding:15px 16px;${isPast ? "opacity:.6" : ""}">
@@ -1030,15 +1167,9 @@
 
     const reviews = (st.reviews || []).slice().sort((a, z) => (z.createdAt || 0) - (a.createdAt || 0));
     const avg = reviews.length ? (reviews.reduce((s, r) => s + Number(r.rating || 0), 0) / reviews.length).toFixed(1) : null;
-    const revHtml = reviews.length ? reviews.slice(0, 20).map((r) => `
-      <div class="card" style="padding:13px 15px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-          <b style="font-size:14.5px">${esc(r.userName || "לקוח")}</b>
-          <span class="rev-stars">${"★".repeat(Number(r.rating) || 0)}<span class="dim">${"★".repeat(5 - (Number(r.rating) || 0))}</span></span>
-        </div>
-        ${r.text ? `<p style="font-size:13.5px;color:var(--muted);margin-top:6px;line-height:1.5">${esc(r.text)}</p>` : ""}
-        ${r.serviceName ? `<div class="hint" style="margin-top:6px">${esc(r.serviceName)}</div>` : ""}
-      </div>`).join("") : `<p class="hint" style="margin-top:4px">אין עדיין ביקורות — לקוחות מתבקשים לדרג אחרי כל תספורת.</p>`;
+    const revHtml = reviews.length
+      ? reviews.slice(0, 30).map((r) => reviewCardHtml(r)).join("")
+      : `<p class="hint" style="margin-top:4px">אין עדיין ביקורות — לקוחות מתבקשים לדרג אחרי כל תספורת.</p>`;
 
     return `
       <div class="month-nav">
@@ -1175,8 +1306,8 @@
       if (t.dataset.wait) { const [dk, tm] = t.dataset.wait.split("|"); openWaitlist(dk, tm); return; }
       if (t.dataset.day && t.classList.contains("day-chip")) { view.selDate = t.dataset.day; view.selSlot = null; render(); return; }
       if (t.dataset.oday) { view.oDate = t.dataset.oday; render(); return; }
-      if (t.dataset.tab) { view.clientTab = t.dataset.tab; render(); return; }
-      if (t.dataset.otab) { view.ownerTab = t.dataset.otab; render(); return; }
+      if (t.dataset.tab) { if (view.clientTab !== t.dataset.tab) recordNav(); view.clientTab = t.dataset.tab; render(); return; }
+      if (t.dataset.otab) { if (view.ownerTab !== t.dataset.otab) recordNav(); view.ownerTab = t.dataset.otab; render(); return; }
 
       const act = t.dataset.act;
       if (!act) return;
@@ -1200,6 +1331,10 @@
         case "enable-notif": handleEnableNotif(); break;
         case "install-app": doInstall(); break;
         case "install-dismiss": suppressInstall(3); hideInstallBar(); break;
+        case "add-cal": addToCalendar(t.dataset.id); break;
+        case "share-app": shareApp(); break;
+        case "stay": closeModal(); break;
+        case "do-exit": performExit(); break;
 
         // רשימת המתנה
         case "join-wait": doJoinWait(t.dataset.key); break;
@@ -1460,6 +1595,7 @@
     });
     if (view.route === "owner" && localStorage.getItem("ug_owner_auth") !== "1") view.route = "client";
     render();
+    setupBackGuard();
     // תזמון תזכורות ורישום פוש בעת עלייה
     ensureFcm();
     if (view.route === "client" && Notify.permission() === "granted") {
