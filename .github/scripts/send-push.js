@@ -75,6 +75,7 @@ function apptTs(date, start) {
 
   for (const doc of shopsSnap.docs) {
     const shop = doc.data() || {};
+    if (shop.type === "photo") continue;   // דלג על תמונות גלריה ישנות ששמורות ב-shops
     const sid = doc.id;
     const shopName = (shop.shop && shop.shop.name) || "המספרה";
     const alerts = Array.isArray(shop.alerts) ? shop.alerts : [];

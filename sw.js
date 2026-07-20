@@ -1,6 +1,6 @@
 /* Service Worker — מספרת אורי גרושקו
    מטרות: התקנת PWA + הצגת התראות פוש (תזכורות / תור חדש).            */
-const CACHE = "ug-barber-v11";
+const CACHE = "ug-barber-v12";
 const ASSETS = [
   "./",
   "./index.html",

@@ -142,15 +142,26 @@ UG.Store = (function () {
           if (snap.exists && !snap.metadata.hasPendingWrites) cb(snap.data());
         });
       },
-      // גלריה — קולקציה נפרדת, מסוננת לפי מזהה המספרה
+      // גלריה — קולקציה נפרדת מסוננת לפי מזהה המספרה,
+      // + קריאת תמונות ישנות שנשמרו בעבר תחת shops (type:'photo') כדי שלא ייעלמו.
       onGallery(cb) {
+        let neu = [], legacy = [];
+        const push = () => cb(neu.concat(legacy));
         db.collection("gallery").where("shopId", "==", id).onSnapshot(
-          (snap) => cb(snap.docs.map((d) => Object.assign({ id: d.id }, d.data()))),
+          (snap) => { neu = snap.docs.map((d) => Object.assign({ id: d.id }, d.data())); push(); },
           (err) => console.warn("[UG] gallery listen:", err && err.message)
         );
+        if (id === "main") {
+          db.collection("shops").where("type", "==", "photo").onSnapshot(
+            (snap) => { legacy = snap.docs.map((d) => Object.assign({ id: d.id, __legacy: true }, d.data())); push(); },
+            (err) => {}
+          );
+        }
       },
       addPhoto(p) { return db.collection("gallery").add(Object.assign({ shopId: id }, p)); },
-      removePhoto(pid) { return db.collection("gallery").doc(pid).delete(); },
+      removePhoto(pid, legacy) {
+        return legacy ? db.collection("shops").doc(pid).delete() : db.collection("gallery").doc(pid).delete();
+      },
       // שמירת טוקן פוש (FCM) של מכשיר — לשליחת התראות גם כשהאפליקציה סגורה
       saveToken(uid, token) {
         return db.collection("pushTokens").doc(uid).set({
@@ -264,7 +275,12 @@ UG.Store = (function () {
   async function addPhoto(dataUrl, caption) {
     if (backend.addPhoto) { await backend.addPhoto({ dataUrl: dataUrl, caption: caption || "", createdAt: Date.now() }); reloadGallery(); }
   }
-  async function removePhoto(id) { if (backend.removePhoto) { await backend.removePhoto(id); reloadGallery(); } }
+  async function removePhoto(id) {
+    if (!backend.removePhoto) return;
+    const item = (galleryCache || []).find((x) => x.id === id);
+    await backend.removePhoto(id, !!(item && item.__legacy));
+    reloadGallery();
+  }
 
   function subscribe(fn) { subs.add(fn); if (state) fn(state); return () => subs.delete(fn); }
   function get() { return state; }

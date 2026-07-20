@@ -12,9 +12,21 @@ UG.Notify = (function () {
   function permission() { return supported() ? Notification.permission : "unsupported"; }
 
   function registerSW() {
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("sw.js").then((r) => { swReg = r; }).catch(() => {});
-    }
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("sw.js").then((r) => {
+      swReg = r;
+      try { r.update(); } catch (e) {}
+      // כשמזוהה גרסה חדשה — לרענן פעם אחת אוטומטית (מונע גרסאות ישנות בטלפון)
+      r.addEventListener("updatefound", () => {
+        const nw = r.installing;
+        if (!nw) return;
+        nw.addEventListener("statechange", () => {
+          if (nw.state === "activated" && navigator.serviceWorker.controller) {
+            location.reload();
+          }
+        });
+      });
+    }).catch(() => {});
   }
 
   // פותח את חלון ההרשאה של הדפדפן לשליחת התראות
