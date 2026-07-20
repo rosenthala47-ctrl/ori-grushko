@@ -120,28 +120,17 @@
     const st = Store.get();
     const b = st.bookings.find((x) => x.id === id);
     if (!b) return;
-    const esc2 = (s) => String(s == null ? "" : s).replace(/([,;\\])/g, "\\$1").replace(/\n/g, "\\n");
     const start = u.dateTime(b.date, b.start), end = u.dateTime(b.date, b.end);
-    const lines = [
-      "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//ori-grushko//HE", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
-      "BEGIN:VEVENT",
-      "UID:" + b.id + "@ori-grushko",
-      "DTSTAMP:" + icsDate(new Date()),
-      "DTSTART:" + icsDate(start),
-      "DTEND:" + icsDate(end),
-      "SUMMARY:" + esc2(b.serviceName + " — " + st.shop.name),
-      "DESCRIPTION:" + esc2("תור ל" + b.serviceName + " · " + u.fmtPrice(b.price)),
-      st.shop.address ? "LOCATION:" + esc2(st.shop.address) : "",
-      "BEGIN:VALARM", "TRIGGER:-PT60M", "ACTION:DISPLAY", "DESCRIPTION:" + esc2("תזכורת לתספורת"), "END:VALARM",
-      "END:VEVENT", "END:VCALENDAR",
-    ].filter(Boolean);
-    const blob = new Blob([lines.join("\r\n")], { type: "text/calendar;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "tor-" + b.date + ".ics";
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-    toast("נפתח קובץ להוספה ליומן 📅", "sky", "📅");
+    const dates = icsDate(start) + "/" + icsDate(end);      // YYYYMMDDTHHMMSSZ/…
+    const text = b.serviceName + " — " + st.shop.name;
+    const details = "תור ל" + b.serviceName + " · " + u.fmtPrice(b.price);
+    const url = "https://calendar.google.com/calendar/render?action=TEMPLATE" +
+      "&text=" + encodeURIComponent(text) +
+      "&dates=" + dates +
+      "&details=" + encodeURIComponent(details) +
+      (st.shop.address ? "&location=" + encodeURIComponent(st.shop.address) : "");
+    window.open(url, "_blank", "noopener");
+    toast("נפתח Google Calendar עם התור 📅", "sky", "📅");
   }
 
   /* =======================================================================
