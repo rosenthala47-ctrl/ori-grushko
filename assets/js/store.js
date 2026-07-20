@@ -8,11 +8,14 @@
    =========================================================================*/
 window.UG = window.UG || {};
 UG.Store = (function () {
-  const KEY = "ug_barber_state_v1";
   const u = UG.util;
+  const KEY = (id) => "ug_barber_state_v1__" + id;   // מפתח מקומי לכל מספרה
+  const GKEY = (id) => "ug_gallery_v1__" + id;
 
+  let shopId = "main";
   let state = null;
   let backend = null;
+  let notFound = false;
   const subs = new Set();
   let galleryCache = [];
   const gallerySubs = new Set();
@@ -76,10 +79,10 @@ UG.Store = (function () {
   /* =======================================================================
      Backend מקומי
      =======================================================================*/
-  const GKEY = "ug_gallery_v1";
-  function LocalBackend() {
+  function LocalBackend(id) {
+    const skey = KEY(id), gkey = GKEY(id);
     let bc = null;
-    try { bc = new BroadcastChannel("ug_barber"); } catch (e) {}
+    try { bc = new BroadcastChannel("ug_barber_" + id); } catch (e) {}
     const listeners = { state: [], gallery: [] };
     if (bc) bc.onmessage = (ev) => {
       const t = ev && ev.data && ev.data.t;
@@ -87,42 +90,43 @@ UG.Store = (function () {
       else listeners.state.forEach((fn) => fn());
     };
     window.addEventListener("storage", (e) => {
-      if (e.key === KEY) listeners.state.forEach((fn) => fn());
-      if (e.key === GKEY) listeners.gallery.forEach((fn) => fn());
+      if (e.key === skey) listeners.state.forEach((fn) => fn());
+      if (e.key === gkey) listeners.gallery.forEach((fn) => fn());
     });
-    function readG() { try { return JSON.parse(localStorage.getItem(GKEY) || "[]"); } catch (e) { return []; } }
+    function readG() { try { return JSON.parse(localStorage.getItem(gkey) || "[]"); } catch (e) { return []; } }
     function writeG(list) {
-      try { localStorage.setItem(GKEY, JSON.stringify(list)); } catch (e) {}
+      try { localStorage.setItem(gkey, JSON.stringify(list)); } catch (e) {}
       try { if (bc) bc.postMessage({ t: "gallery" }); } catch (e) {}
     }
     return {
       mode: "local",
       read() {
         try {
-          const raw = localStorage.getItem(KEY);
+          const raw = localStorage.getItem(skey);
           return raw ? normalize(JSON.parse(raw)) : null;
         } catch (e) { return null; }
       },
       write(s) {
         s.updatedAt = Date.now();
-        try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {}
+        try { localStorage.setItem(skey, JSON.stringify(s)); } catch (e) {}
         try { if (bc) bc.postMessage({ t: "sync", at: s.updatedAt }); } catch (e) {}
         return Promise.resolve();
       },
       onRemote(cb) { listeners.state.push(cb); },
-      // גלריה
+      // גלריה (לכל מספרה בנפרד)
       readGallery() { return readG(); },
       onGallery(cb) { listeners.gallery.push(cb); },
       addPhoto(p) { const l = readG(); l.unshift(Object.assign({ id: u.uid() }, p)); writeG(l); return Promise.resolve(); },
-      removePhoto(id) { writeG(readG().filter((x) => x.id !== id)); return Promise.resolve(); },
+      removePhoto(pid) { writeG(readG().filter((x) => x.id !== pid)); return Promise.resolve(); },
+      exists() { return Promise.resolve(localStorage.getItem(skey) != null); },
     };
   }
 
   /* =======================================================================
      Backend של Firebase (compat SDK)
      =======================================================================*/
-  function FirebaseBackend(db) {
-    const ref = db.collection("shops").doc("main");
+  function FirebaseBackend(db, id) {
+    const ref = db.collection("shops").doc(id);
     return {
       mode: "cloud",
       _db: db, _ref: ref,
@@ -138,15 +142,15 @@ UG.Store = (function () {
           if (snap.exists && !snap.metadata.hasPendingWrites) cb(snap.data());
         });
       },
-      // גלריה — נשמרת כמסמכים בקולקציית shops (מכוסה ע״י אותם חוקי גישה)
+      // גלריה — קולקציה נפרדת, מסוננת לפי מזהה המספרה
       onGallery(cb) {
-        db.collection("shops").where("type", "==", "photo").onSnapshot(
+        db.collection("gallery").where("shopId", "==", id).onSnapshot(
           (snap) => cb(snap.docs.map((d) => Object.assign({ id: d.id }, d.data()))),
           (err) => console.warn("[UG] gallery listen:", err && err.message)
         );
       },
-      addPhoto(p) { return db.collection("shops").add(Object.assign({ type: "photo" }, p)); },
-      removePhoto(id) { return db.collection("shops").doc(id).delete(); },
+      addPhoto(p) { return db.collection("gallery").add(Object.assign({ shopId: id }, p)); },
+      removePhoto(pid) { return db.collection("gallery").doc(pid).delete(); },
       // שמירת טוקן פוש (FCM) של מכשיר — לשליחת התראות גם כשהאפליקציה סגורה
       saveToken(uid, token) {
         return db.collection("pushTokens").doc(uid).set({
@@ -159,7 +163,8 @@ UG.Store = (function () {
       transactBooking(build) {
         return db.runTransaction((tx) =>
           tx.get(ref).then((snap) => {
-            const cur = normalize(snap.exists ? snap.data() : defaultState());
+            if (!snap.exists) return { ok: false, reason: "המספרה לא נמצאה" };
+            const cur = normalize(snap.data());
             const res = build(cur);
             if (!res.ok) return res;
             cur.updatedAt = Date.now();
@@ -168,10 +173,12 @@ UG.Store = (function () {
           })
         );
       },
+      exists() { return ref.get().then((snap) => snap.exists); },
     };
   }
 
-  function loadFirebase() {
+  let _db = null, _connected = false;
+  function loadFirebaseDb() {
     return new Promise((resolve, reject) => {
       const cfg = UG_CONFIG.firebase;
       if (!cfg || !cfg.apiKey || !cfg.projectId) return reject("no-config");
@@ -182,14 +189,20 @@ UG.Store = (function () {
       const V = "10.12.2";
       load(`https://www.gstatic.com/firebasejs/${V}/firebase-app-compat.js`)
         .then(() => load(`https://www.gstatic.com/firebasejs/${V}/firebase-firestore-compat.js`))
-        .then(() => {
-          firebase.initializeApp(cfg);
-          const db = firebase.firestore();
-          resolve(FirebaseBackend(db));
-        })
+        .then(() => { firebase.initializeApp(cfg); resolve(firebase.firestore()); })
         .catch(reject);
     });
   }
+  async function connect() {
+    if (_connected) return;
+    _connected = true;
+    try { _db = await loadFirebaseDb(); }
+    catch (e) {
+      _db = null;
+      if (UG_CONFIG.firebase && UG_CONFIG.firebase.apiKey) console.warn("[UG] Firebase לא זמין — מצב מקומי.", e && e.message ? e.message : e);
+    }
+  }
+  function makeBackend(id) { return _db ? FirebaseBackend(_db, id) : LocalBackend(id); }
 
   /* =======================================================================
      API
@@ -204,33 +217,39 @@ UG.Store = (function () {
     if (s) { state = s; emit(); }
   }
 
-  async function bootBackend(b) {
-    // מוודא שהחיבור באמת עובד (קריאה/כתיבה ראשונית)
-    let s = await b.read();
-    if (!s) { s = defaultState(); await b.write(s); }
-    return s;
-  }
-
-  async function init() {
-    // ניסיון חיבור לענן; אם נכשל (אין מסד נתונים / חוקי גישה / לא מקוון) — נופלים למצב מקומי
-    try {
-      const fb = await loadFirebase();
-      const s = await bootBackend(fb);
-      backend = fb; state = s;
-    } catch (e) {
-      if (UG_CONFIG.firebase && UG_CONFIG.firebase.apiKey) {
-        console.warn("[UG] Firebase לא זמין — עוברים למצב מקומי.", e && e.message ? e.message : e);
-      }
-      backend = LocalBackend();
-      state = await bootBackend(backend);
+  async function init(id) {
+    shopId = (id || "main");
+    notFound = false;
+    await connect();
+    backend = makeBackend(shopId);
+    let s = await backend.read();
+    if (!s) {
+      if (shopId === "main") { s = defaultState(); await backend.write(s); } // תאימות לאחור / הדגמה
+      else { state = null; notFound = true; emit(); return null; }
     }
+    state = s;
     backend.onRemote((remote) => reloadFromRemote(remote));
-    // גלריה
     if (backend.onGallery) backend.onGallery((list) => reloadGallery(list));
     reloadGallery();
     emit();
     return state;
   }
+
+  // יצירת מספרה חדשה (רישום ספר)
+  async function createShop(id, data) {
+    await connect();
+    const b = makeBackend(id);
+    const exists = await b.exists();
+    if (exists) return { ok: false, reason: "הכתובת הזו כבר תפוסה — בחרו אחרת" };
+    const s = defaultState();
+    s.shop.name = (data && data.name) || s.shop.name;
+    s.shop.tagline = (data && data.tagline) || "מספרה";
+    s.shop.ownerPass = String((data && data.ownerPass) || "");
+    s.shop.phone = (data && data.phone) || "";
+    await b.write(s);
+    return { ok: true, id: id };
+  }
+  async function shopExists(id) { await connect(); return makeBackend(id).exists(); }
 
   /* ---------- גלריה ---------- */
   function emitGallery() { gallerySubs.forEach((fn) => { try { fn(galleryCache); } catch (e) {} }); }
@@ -396,7 +415,7 @@ UG.Store = (function () {
     if (!backend || backend.mode !== "cloud" || !backend.saveToken) return;
     try {
       await backend.saveToken(userId, token);
-      if (isOwner) await backend.saveToken("owner", token);
+      if (isOwner) await backend.saveToken("owner_" + shopId, token);
     } catch (e) { console.warn("[UG] saveToken failed", e && e.message); }
   }
 
@@ -434,6 +453,9 @@ UG.Store = (function () {
     createBooking, setBookingStatus, setBlock, deleteBooking,
     joinWaitlist, leaveWaitlist, consumeAlert, addReview, savePushToken,
     subscribeGallery, getGallery, addPhoto, removePhoto,
+    createShop, shopExists,
     get mode() { return backend ? backend.mode : "local"; },
+    get shopId() { return shopId; },
+    get notFound() { return notFound; },
   };
 })();

@@ -33,41 +33,6 @@ function apptTs(date, start) {
   const db = admin.firestore();
   const messaging = admin.messaging();
 
-  const shopSnap = await db.doc("shops/main").get();
-  if (!shopSnap.exists) { console.log("אין מסמך shops/main — יוצאים."); return; }
-  const shop = shopSnap.data();
-  const alerts = Array.isArray(shop.alerts) ? shop.alerts : [];
-  const bookings = Array.isArray(shop.bookings) ? shop.bookings : [];
-  const shopName = (shop.shop && shop.shop.name) || "המספרה";
-
-  const stateRef = db.doc("system/pushState");
-  const stateSnap = await stateRef.get();
-  const firstRun = !stateSnap.exists;
-  const stData = stateSnap.exists ? stateSnap.data() : {};
-  const doneAlerts = new Set(stData.alertIds || []);
-  const doneBookings = new Set(stData.bookingIds || []);
-
-  const now = Date.now();
-  const newAlerts = alerts.filter((a) => a && a.id && !doneAlerts.has(a.id) && apptTs(a.date, a.start) > now);
-  const newBookings = bookings.filter((b) =>
-    b && b.id && !doneBookings.has(b.id) && b.status !== "cancelled" && apptTs(b.date, b.start) > now);
-
-  // סמן את כל מה שקיים כרגע כ"טופל" — כדי לא לשלוח פעמיים
-  alerts.forEach((a) => a && a.id && doneAlerts.add(a.id));
-  bookings.forEach((b) => b && b.id && doneBookings.add(b.id));
-
-  const saveState = () => stateRef.set({
-    alertIds: [...doneAlerts].slice(-800),
-    bookingIds: [...doneBookings].slice(-800),
-    updatedAt: now,
-  });
-
-  if (firstRun) {
-    await saveState();
-    console.log("ריצה ראשונה — סימון מצב קיים בלבד, ללא שליחה.");
-    return;
-  }
-
   async function tokensFor(uid) {
     const s = await db.doc("pushTokens/" + uid).get();
     const d = s.exists ? s.data() : null;
@@ -98,16 +63,50 @@ function apptTs(date, start) {
     return res.successCount;
   }
 
-  let sent = 0;
-  for (const a of newAlerts) {
-    sent += await sendToUid(a.userId, "🎉 התפנה תור!",
-      `${relDay(a.date)} בשעה ${a.start} — מהרו להזמין לפני שייתפס · ${shopName}`, "freed-" + a.id);
-  }
-  for (const b of newBookings) {
-    sent += await sendToUid("owner", "📅 תור חדש נקבע",
-      `${b.userName} — ${b.serviceName}, ${relDay(b.date)} בשעה ${b.start}`, "newbook-" + b.id);
+  // מצב "כבר טופל" לכל המספרות במסמך אחד
+  const stateRef = db.doc("system/pushState");
+  const stateSnap = await stateRef.get();
+  const firstRun = !stateSnap.exists;
+  const perShop = (stateSnap.exists && stateSnap.data().shops) || {};
+
+  const now = Date.now();
+  const shopsSnap = await db.collection("shops").get();
+  let sent = 0, totalNewA = 0, totalNewB = 0;
+
+  for (const doc of shopsSnap.docs) {
+    const shop = doc.data() || {};
+    const sid = doc.id;
+    const shopName = (shop.shop && shop.shop.name) || "המספרה";
+    const alerts = Array.isArray(shop.alerts) ? shop.alerts : [];
+    const bookings = Array.isArray(shop.bookings) ? shop.bookings : [];
+
+    const st = perShop[sid] || { alertIds: [], bookingIds: [] };
+    const doneAlerts = new Set(st.alertIds || []);
+    const doneBookings = new Set(st.bookingIds || []);
+
+    const newAlerts = alerts.filter((a) => a && a.id && !doneAlerts.has(a.id) && apptTs(a.date, a.start) > now);
+    const newBookings = bookings.filter((b) =>
+      b && b.id && !doneBookings.has(b.id) && b.status !== "cancelled" && apptTs(b.date, b.start) > now);
+
+    if (!firstRun) {
+      for (const a of newAlerts) {
+        sent += await sendToUid(a.userId, "🎉 התפנה תור!",
+          `${relDay(a.date)} בשעה ${a.start} — מהרו להזמין לפני שייתפס · ${shopName}`, "freed-" + a.id);
+      }
+      for (const b of newBookings) {
+        sent += await sendToUid("owner_" + sid, "📅 תור חדש נקבע",
+          `${b.userName} — ${b.serviceName}, ${relDay(b.date)} בשעה ${b.start}`, "newbook-" + b.id);
+      }
+    }
+
+    // סמן הכל כטופל
+    alerts.forEach((a) => a && a.id && doneAlerts.add(a.id));
+    bookings.forEach((b) => b && b.id && doneBookings.add(b.id));
+    perShop[sid] = { alertIds: [...doneAlerts].slice(-500), bookingIds: [...doneBookings].slice(-500) };
+    totalNewA += newAlerts.length; totalNewB += newBookings.length;
   }
 
-  await saveState();
-  console.log(`הושלם. alerts חדשים=${newAlerts.length}, bookings חדשים=${newBookings.length}, פושים שנשלחו=${sent}`);
+  await stateRef.set({ shops: perShop, updatedAt: now });
+  if (firstRun) { console.log("ריצה ראשונה — סימון מצב קיים בלבד, ללא שליחה."); return; }
+  console.log(`הושלם. מספרות=${shopsSnap.size}, alerts חדשים=${totalNewA}, bookings חדשים=${totalNewB}, פושים שנשלחו=${sent}`);
 })().catch((e) => { console.error(e); process.exit(1); });

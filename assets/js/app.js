@@ -8,16 +8,32 @@
   const $ = (s, r) => (r || document).querySelector(s);
   const esc = u.escapeHtml;
 
+  /* ---------- זיהוי המספרה מהקישור (רב-משתמשי) ---------- */
+  function resolveShopId() {
+    let h = (location.hash || "").replace(/^#/, "").trim().toLowerCase();
+    if (h === "new" || h === "signup") return "__new__";   // מסך פתיחת מספרה
+    h = h.replace(/[^a-z0-9-]/g, "");
+    return h || "main";                                     // ברירת מחדל: המספרה הקיימת
+  }
+  const SHOP = resolveShopId();
+  const AUTHKEY = "ug_owner_auth__" + SHOP;
+  const ROUTEKEY = "ug_route__" + SHOP;
+  function clientLink() {
+    return location.origin + location.pathname + (SHOP === "main" ? "" : "#" + SHOP);
+  }
+
   /* ---------- מצב תצוגה מקומי (לא נשמר בשרת) ---------- */
   const view = {
-    route: (function () { const r = localStorage.getItem("ug_route"); return r === "owner" || r === "client" ? r : "client"; })(), // client | owner
-    clientTab: "book",   // book | mine
-    ownerTab: "cal",     // cal | hours | services | bookings | settings
+    route: (function () { const r = localStorage.getItem(ROUTEKEY); return r === "owner" || r === "client" ? r : "client"; })(), // client | owner
+    clientTab: "book",   // book | gallery | mine
+    ownerTab: "cal",     // cal | hours | services | bookings | report | settings
     selService: null,
     selDate: null,       // יום נבחר בצד הלקוח
     selSlot: null,
     oDate: null,         // יום נבחר בצד הבעלים (תצוגת יומן)
     statMonth: null,     // חודש נבחר בדוח ("YYYY-MM")
+    onboarding: false,   // מסך פתיחת מספרה
+    notFound: false,     // מספרה לא קיימת
   };
   let ownerSeen = null;     // Set של מזהי תורים שהבעלים כבר ראה (זיהוי תור חדש)
   let identity = loadIdentity();
@@ -133,7 +149,7 @@
      =======================================================================*/
   async function shareApp() {
     const st = Store.get();
-    const url = location.href.split("#")[0];
+    const url = clientLink();
     const text = "קביעת תור למספרת " + st.shop.name + " 💈✂️";
     try {
       if (navigator.share) { await navigator.share({ title: st.shop.name, text: text, url: url }); return; }
@@ -181,8 +197,8 @@
   function go(route) {
     if (view.route !== route) recordNav();
     view.route = route;
-    if (route === "owner") localStorage.setItem("ug_owner_auth", "1");
-    localStorage.setItem("ug_route", route);
+    if (route === "owner") localStorage.setItem(AUTHKEY, "1");
+    localStorage.setItem(ROUTEKEY, route);
     if (route === "owner" && !ownerSeen) {
       const st = Store.get();
       ownerSeen = new Set(st.bookings.map((b) => b.id)); // בסיס — לא להתריע על קיימים
@@ -508,6 +524,9 @@
 
       ${mapsCard(st)}
       ${shareCard()}
+      <p class="hint" style="text-align:center;margin-top:22px">
+        מנהלים מספרה? <a href="#new" data-act="open-signup" style="color:var(--sky)">פתחו מערכת תורים משלכם ›</a>
+      </p>
     `;
   }
 
@@ -1223,6 +1242,15 @@
 
   function ownerSettings(st) {
     return `
+      <div class="section-title">🔗 הקישור שלך ללקוחות</div>
+      <div class="card">
+        <div class="hint" style="margin-bottom:10px">שלחו את הקישור הזה ללקוחות — הוא פותח את המספרה שלכם:</div>
+        <div style="word-break:break-all;font-weight:700;font-size:13.5px;color:var(--sky-2)">${esc(clientLink())}</div>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn btn-sm" data-act="copy-link">📋 העתקה</button>
+          <button class="btn btn-sm" data-act="share-app">🔗 שיתוף</button>
+        </div>
+      </div>
       ${ownerGallerySection()}
       <div class="section-title">פרטי העסק</div>
       <div class="card">
@@ -1279,8 +1307,76 @@
      רינדור ראשי
      =======================================================================*/
   function render() {
+    if (view.onboarding) { $("#root").innerHTML = renderOnboarding(); return; }
+    if (view.notFound) { $("#root").innerHTML = renderNotFound(); return; }
     if (!Store.get()) return;
     $("#root").innerHTML = view.route === "owner" ? renderOwner() : renderClient();
+  }
+
+  /* =======================================================================
+     פתיחת מספרה חדשה (רישום ספר) + "מספרה לא נמצאה"
+     =======================================================================*/
+  function renderOnboarding() {
+    const base = location.origin + location.pathname + "#";
+    return `
+    <div class="screen active">
+      <div class="role-wrap">
+        <div class="role-hero">
+          <div class="rh-logo">✂️</div>
+          <h1>פתיחת מספרה</h1>
+          <p>הקימו מערכת תורים משלכם — בחינם, תוך דקה</p>
+        </div>
+        <div class="card">
+          <div class="field"><label>שם המספרה</label>
+            <input class="input" id="ob-name" placeholder="למשל: מספרת דני"></div>
+          <div class="field"><label>כתובת אישית (אותיות באנגלית/מספרים)</label>
+            <input class="input" id="ob-handle" placeholder="dani" autocapitalize="off" autocomplete="off" spellcheck="false">
+            <div class="hint" id="ob-linkPrev">הקישור שלך: ${esc(base)}הכתובת-שלך</div>
+          </div>
+          <div class="field"><label>סיסמת ניהול (רק אתם תדעו)</label>
+            <input class="input" id="ob-pass" type="text" placeholder="בחרו סיסמה"></div>
+          <button class="btn btn-primary" data-act="create-shop">יצירת המספרה</button>
+          <button class="btn btn-ghost" data-act="ob-cancel" style="margin-top:8px">חזרה</button>
+        </div>
+        <p class="hint" style="text-align:center;margin-top:16px">אחרי היצירה תקבלו קישור אישי לשלוח ללקוחות שלכם.</p>
+      </div>
+    </div>`;
+  }
+
+  function renderNotFound() {
+    return `
+    <div class="screen active">
+      <div class="role-wrap" style="text-align:center">
+        <div class="role-hero">
+          <div class="rh-logo">🔍</div>
+          <h1>המספרה לא נמצאה</h1>
+          <p>ייתכן שהקישור שגוי או שהמספרה עדיין לא נפתחה</p>
+        </div>
+        <button class="btn btn-primary" data-act="open-signup">פתיחת מספרה חדשה</button>
+      </div>
+    </div>`;
+  }
+
+  async function doCreateShop() {
+    const name = ($("#ob-name") && $("#ob-name").value.trim()) || "";
+    let handle = (($("#ob-handle") && $("#ob-handle").value) || "").trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+    const pass = ($("#ob-pass") && $("#ob-pass").value.trim()) || "";
+    if (!name) { toast("נא להזין שם מספרה", "", "✋"); return; }
+    if (!/^[a-z0-9-]{3,20}$/.test(handle)) { toast("כתובת: 3–20 אותיות באנגלית/מספרים", "", "✋"); return; }
+    if (handle === "main" || handle === "new" || handle === "signup") { toast("כתובת שמורה — בחרו אחרת", "", "✋"); return; }
+    if (pass.length < 3) { toast("סיסמה קצרה מדי (לפחות 3 תווים)", "", "✋"); return; }
+    const btn = $("[data-act='create-shop']"); if (btn) { btn.disabled = true; btn.textContent = "יוצר…"; }
+    const res = await Store.createShop(handle, { name: name, ownerPass: pass });
+    if (!res.ok) {
+      toast(res.reason || "שגיאה ביצירת המספרה", "", "⚠️");
+      if (btn) { btn.disabled = false; btn.textContent = "יצירת המספרה"; }
+      return;
+    }
+    // נכנסים למספרה החדשה כמנהל
+    localStorage.setItem("ug_owner_auth__" + handle, "1");
+    localStorage.setItem("ug_route__" + handle, "owner");
+    location.hash = handle;
+    location.reload();
   }
 
   /* =======================================================================
@@ -1335,6 +1431,16 @@
         case "share-app": shareApp(); break;
         case "stay": closeModal(); break;
         case "do-exit": performExit(); break;
+        // רב-משתמשי: פתיחת מספרה / ניווט להרשמה
+        case "create-shop": doCreateShop(); break;
+        case "open-signup": location.hash = "new"; location.reload(); break;
+        case "ob-cancel": location.hash = ""; location.reload(); break;
+        case "copy-link":
+          (async () => {
+            try { await navigator.clipboard.writeText(clientLink()); toast("הקישור הועתק ✓", "good", "📋"); }
+            catch (e) { shareApp(); }
+          })();
+          break;
 
         // רשימת המתנה
         case "join-wait": doJoinWait(t.dataset.key); break;
@@ -1430,6 +1536,15 @@
         toast("השעות עודכנו", "sky", "🕑");
       }
     });
+
+    // תצוגה מקדימה של הקישור בעת פתיחת מספרה
+    document.addEventListener("input", (e) => {
+      if (e.target && e.target.id === "ob-handle") {
+        const h = e.target.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+        const prev = $("#ob-linkPrev");
+        if (prev) prev.textContent = "הקישור שלך: " + location.origin + location.pathname + "#" + (h || "הכתובת-שלך");
+      }
+    });
   }
 
   function promptOwner() {
@@ -1442,10 +1557,12 @@
     `);
     const check = () => {
       const v = (($("#own-code") && $("#own-code").value) || "").trim();
-      const codes = [UG_CONFIG.ownerPasscode].concat(UG_CONFIG.ownerPasscodesExtra || []).map(String);
-      if (codes.includes(v)) {
-        closeModal(); go("owner");
-      } else { toast("סיסמה שגויה", "", "🔒"); }
+      const shop = (Store.get() && Store.get().shop) || {};
+      const configCodes = [UG_CONFIG.ownerPasscode].concat(UG_CONFIG.ownerPasscodesExtra || []).map(String);
+      const ok = (shop.ownerPass && v === String(shop.ownerPass)) ||
+        (SHOP === "main" && configCodes.includes(v));   // סיסמאות ה-config עובדות רק למספרה הראשית
+      if (ok) { closeModal(); go("owner"); }
+      else { toast("סיסמה שגויה", "", "🔒"); }
     };
     $("[data-act2='check-code']").addEventListener("click", check);
     $("#own-code").addEventListener("keydown", (e) => { if (e.key === "Enter") check(); });
@@ -1586,7 +1703,12 @@
     Notify.registerSW();
     wire();
     initInstall();
-    await Store.init();
+
+    if (SHOP === "__new__") { view.onboarding = true; render(); return; }  // מסך פתיחת מספרה
+
+    await Store.init(SHOP);
+    if (Store.notFound) { view.notFound = true; render(); return; }        // מספרה לא קיימת
+
     Store.subscribe(onStoreChange);
     Store.subscribeGallery(() => {
       // רענון כשמסתכלים על גלריה ולא באמצע הקלדה
@@ -1594,7 +1716,7 @@
         (view.route === "owner" && view.ownerTab === "settings");
       if (onGalleryView && !isEditingRoot()) render();
     });
-    if (view.route === "owner" && localStorage.getItem("ug_owner_auth") !== "1") view.route = "client";
+    if (view.route === "owner" && localStorage.getItem(AUTHKEY) !== "1") view.route = "client";
     render();
     // תזמון תזכורות ורישום פוש בעת עלייה
     ensureFcm();
