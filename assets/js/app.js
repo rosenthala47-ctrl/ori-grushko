@@ -36,6 +36,7 @@
     notFound: false,     // מספרה לא קיימת
   };
   let ownerSeen = null;     // Set של מזהי תורים שהבעלים כבר ראה (זיהוי תור חדש)
+  let authAvail = false;    // האם התחברות מאובטחת (Firebase Auth) זמינה
   let identity = loadIdentity();
 
   // כניסת מנהל נסתרת — 3 הקשות רצופות על הלוגו
@@ -1271,6 +1272,70 @@
     `;
   }
 
+  function ownerSecuritySection(st) {
+    const shop = st.shop || {};
+    if (!(UG.Auth && authAvail)) {
+      return `
+        <div class="section-title">🔒 אבטחה</div>
+        <div class="card"><div class="conn-line"><span class="conn-dot local"></span>
+          התחברות מאובטחת דורשת חיבור ענן (Firebase) פעיל.</div></div>`;
+    }
+    if (shop.ownerUid) {
+      const email = (UG.Auth.currentEmail && UG.Auth.currentEmail()) || "";
+      return `
+        <div class="section-title">🔒 אבטחה</div>
+        <div class="card">
+          <div class="conn-line" style="margin-bottom:10px"><span class="conn-dot"></span>
+            המספרה מאובטחת בחשבון אישי${email ? ` · ${esc(email)}` : ""}</div>
+          <p class="hint" style="margin-top:0">מעכשיו הכניסה לניהול היא עם החשבון הזה. (בשלב הבא נבטל את הקוד הישן ונחזק את חוקי מסד הנתונים.)</p>
+          <button class="btn btn-sm btn-danger" data-act="auth-signout" style="margin-top:10px">התנתקות מהחשבון</button>
+        </div>`;
+    }
+    return `
+      <div class="section-title">🔒 אבטחה</div>
+      <div class="card">
+        <p class="hint" style="margin-top:0">הגנו על המספרה עם חשבון אישי (אימייל+סיסמה) במקום קוד משותף.</p>
+        <button class="btn btn-primary" data-act="secure-shop" style="margin-top:10px">🔒 הגנה על המספרה שלי</button>
+      </div>`;
+  }
+
+  function openSecureShop() {
+    openModal(`
+      <div class="m-title">🔒 הגנה על המספרה</div>
+      <div class="m-sub">התחברו או הירשמו עם אימייל וסיסמה</div>
+      <div class="field"><label>אימייל</label>
+        <input class="input" id="au-email" type="email" inputmode="email" autocomplete="username" placeholder="you@example.com"></div>
+      <div class="field"><label>סיסמה (לפחות 6 תווים)</label>
+        <input class="input" id="au-pass" type="password" autocomplete="current-password"></div>
+      <p class="hint" id="au-err" style="color:var(--bad);min-height:15px;margin-top:0"></p>
+      <button class="btn btn-primary" data-act2="do-secure-login">התחברות</button>
+      <button class="btn" data-act2="do-secure-signup" style="margin-top:8px">הרשמה (חשבון חדש)</button>
+      <button class="btn btn-ghost" data-act="close-modal" style="margin-top:8px">ביטול</button>
+    `);
+    const run = async (mode) => {
+      const email = ($("#au-email") && $("#au-email").value.trim()) || "";
+      const pass = ($("#au-pass") && $("#au-pass").value) || "";
+      const errEl = $("#au-err");
+      if (!email || !pass) { if (errEl) errEl.textContent = "נא למלא אימייל וסיסמה"; return; }
+      if (errEl) errEl.textContent = "רגע…";
+      try {
+        if (mode === "signup") await UG.Auth.signUp(email, pass);
+        else await UG.Auth.signIn(email, pass);
+        const uid = UG.Auth.currentUid();
+        const shop = Store.get().shop;
+        if (shop.ownerUid && shop.ownerUid !== uid) {
+          if (errEl) errEl.textContent = "המספרה כבר מאובטחת בחשבון אחר";
+          await UG.Auth.signOut(); return;
+        }
+        if (!shop.ownerUid) await Store.saveShop({ ownerUid: uid });
+        closeModal(); toast("המספרה מאובטחת בחשבון שלך 🔒", "good", "🔒"); render();
+      } catch (e) { if (errEl) errEl.textContent = UG.Auth.humanError(e); }
+    };
+    const lb = $("[data-act2='do-secure-login']"); if (lb) lb.addEventListener("click", () => run("login"));
+    const sb = $("[data-act2='do-secure-signup']"); if (sb) sb.addEventListener("click", () => run("signup"));
+    setTimeout(() => $("#au-email") && $("#au-email").focus(), 100);
+  }
+
   function ownerGallerySection() {
     const photos = Store.getGallery();
     return `
@@ -1315,6 +1380,7 @@
           <button class="btn btn-sm" data-act="share-app">🔗 שיתוף</button>
         </div>
       </div>
+      ${ownerSecuritySection(st)}
       ${ownerGallerySection()}
       <div class="section-title">פרטי העסק</div>
       <div class="card">
@@ -1491,6 +1557,10 @@
         case "enable-notif": handleEnableNotif(); break;
         case "toggle-theme": toggleTheme(); break;
         case "client-detail": clientDetail(t.dataset.key); break;
+        case "secure-shop": openSecureShop(); break;
+        case "auth-signout":
+          if (UG.Auth) UG.Auth.signOut().finally(() => { toast("התנתקת מהחשבון", "", "🔓"); render(); });
+          break;
         case "install-app": doInstall(); break;
         case "install-dismiss": suppressInstall(3); hideInstallBar(); break;
         case "cookie-ok":
@@ -1806,6 +1876,11 @@
     });
     if (view.route === "owner" && localStorage.getItem(AUTHKEY) !== "1") view.route = "client";
     render();
+    // בדיקת זמינות התחברות מאובטחת (Firebase Auth) — לרענון מסך ההגדרות
+    if (UG.Auth) UG.Auth.available().then((a) => {
+      authAvail = a;
+      if (view.route === "owner" && view.ownerTab === "settings" && !isEditingRoot()) render();
+    });
     // תזמון תזכורות ורישום פוש בעת עלייה
     ensureFcm();
     if (view.route === "client" && Notify.permission() === "granted") {

@@ -1,6 +1,6 @@
 /* Service Worker — מספרת אורי גרושקו
    מטרות: התקנת PWA + הצגת התראות פוש (תזכורות / תור חדש).            */
-const CACHE = "ug-barber-v14";
+const CACHE = "ug-barber-v15";
 const ASSETS = [
   "./",
   "./index.html",
@@ -8,6 +8,7 @@ const ASSETS = [
   "./assets/styles.css",
   "./assets/js/util.js",
   "./assets/js/store.js",
+  "./assets/js/auth.js",
   "./assets/js/notify.js",
   "./assets/js/fcm.js",
   "./assets/js/app.js",
