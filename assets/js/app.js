@@ -1416,6 +1416,9 @@
         case "enable-notif": handleEnableNotif(); break;
         case "install-app": doInstall(); break;
         case "install-dismiss": suppressInstall(3); hideInstallBar(); break;
+        case "cookie-ok":
+          localStorage.setItem("ug_cookie_ok", "1"); hideCookieBar();
+          setTimeout(maybeShowInstall, 400); break;
         case "add-cal": addToCalendar(t.dataset.id); break;
         case "share-app": shareApp(); break;
         case "stay": closeModal(); break;
@@ -1635,25 +1638,43 @@
     hideInstallBar();
   }
 
+  function maybeShowInstall() {
+    if (isStandalone() || installSuppressed() || !cookieAccepted()) return;  // לא מעל באנר העוגיות
+    if (deferredPrompt) showInstallBar("android");
+    else if (isIOS()) showInstallBar("ios");
+    else if (/android/i.test(navigator.userAgent)) showInstallBar("generic");
+  }
   function initInstall() {
     if (isStandalone()) return;
-    window.addEventListener("beforeinstallprompt", (e) => {
-      e.preventDefault();
-      deferredPrompt = e;
-      if (!installSuppressed()) showInstallBar("android");
-    });
+    window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferredPrompt = e; maybeShowInstall(); });
     window.addEventListener("appinstalled", () => {
       hideInstallBar(); deferredPrompt = null;
       toast("האפליקציה הותקנה 🎉", "good", "📲");
     });
-    // הצגת ההודעה בכניסה
-    setTimeout(() => {
-      if (isStandalone() || installSuppressed()) return;
-      if (deferredPrompt) showInstallBar("android");
-      else if (isIOS()) showInstallBar("ios");
-      else if (/android/i.test(navigator.userAgent)) showInstallBar("generic");
-    }, 2200);
+    setTimeout(maybeShowInstall, 2200);
   }
+
+  /* =======================================================================
+     הודעת עוגיות (Cookies) — מוצגת פעם אחת עד לאישור
+     =======================================================================*/
+  function cookieAccepted() { return localStorage.getItem("ug_cookie_ok") === "1"; }
+  function hideCookieBar() { const b = document.getElementById("cookieBar"); if (b) b.classList.remove("show"); }
+  function showCookieBar() {
+    if (cookieAccepted()) return;
+    let bar = document.getElementById("cookieBar");
+    if (!bar) { bar = document.createElement("div"); bar.id = "cookieBar"; bar.className = "install-bar"; document.body.appendChild(bar); }
+    bar.innerHTML = `
+      <div class="install-card">
+        <div class="ic-ico">🍪</div>
+        <div class="ic-body">
+          <div class="ic-title">אנחנו משתמשים בעוגיות</div>
+          <div class="ic-sub">כדי לשמור את התורים וההעדפות שלך במכשיר ולשפר את השירות.</div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-act="cookie-ok" style="width:auto">אישור</button>
+      </div>`;
+    requestAnimationFrame(() => bar.classList.add("show"));
+  }
+  function initCookies() { if (!cookieAccepted()) showCookieBar(); }
 
   /* =======================================================================
      תגובה לשינויים מהחנות (זמן אמת)
@@ -1692,6 +1713,7 @@
     Notify.registerSW();
     wire();
     initInstall();
+    initCookies();
 
     if (SHOP === "__new__") { view.onboarding = true; render(); return; }  // מסך פתיחת מספרה
 
