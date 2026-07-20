@@ -249,9 +249,18 @@
   /* =======================================================================
      כותרת עליונה משותפת
      =======================================================================*/
+  function currentTheme() { return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark"; }
+  function toggleTheme() {
+    const t = currentTheme() === "light" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", t);
+    try { localStorage.setItem("ug_theme", t); } catch (e) {}
+    render();
+  }
+
   function topbar(sub, opts) {
     opts = opts || {};
     const st = Store.get();
+    const themeIco = currentTheme() === "light" ? "🌙" : "☀️";
     return `
     <div class="topbar">
       <div class="brand">
@@ -262,6 +271,7 @@
         </div>
       </div>
       <div class="spacer"></div>
+      <button class="icon-btn" data-act="toggle-theme" title="מצב תצוגה">${themeIco}</button>
       ${opts.switch ? `<button class="icon-btn" data-act="logout" title="חזרה לתצוגת לקוח">⇋</button>` : ""}
     </div>`;
   }
@@ -914,6 +924,7 @@
     else if (view.ownerTab === "hours") body = ownerHours(st);
     else if (view.ownerTab === "services") body = ownerServices(st);
     else if (view.ownerTab === "bookings") body = ownerBookings(st);
+    else if (view.ownerTab === "clients") body = ownerClients(st);
     else if (view.ownerTab === "report") body = ownerReport(st);
     else body = ownerSettings(st);
 
@@ -924,12 +935,13 @@
     <div class="screen active">
       ${topbar("ניהול העסק", { switch: true })}
       <div class="content" id="oscroll">${body}</div>
-      <div class="tabbar">
+      <div class="tabbar scroll">
         <button data-otab="cal" class="${view.ownerTab === "cal" ? "active" : ""}"><span class="tb-ico">🗓️</span>יומן</button>
         <button data-otab="hours" class="${view.ownerTab === "hours" ? "active" : ""}"><span class="tb-ico">🕐</span>שעות</button>
         <button data-otab="services" class="${view.ownerTab === "services" ? "active" : ""}"><span class="tb-ico">✂️</span>שירותים</button>
         <button data-otab="bookings" class="${view.ownerTab === "bookings" ? "active" : ""}">
           <span class="tb-ico" style="position:relative">🎟️${upcomingCount ? `<span class="badge-count" style="inset-inline-start:auto;inset-inline-end:-10px;top:-6px">${upcomingCount}</span>` : ""}</span>תורים</button>
+        <button data-otab="clients" class="${view.ownerTab === "clients" ? "active" : ""}"><span class="tb-ico">👥</span>לקוחות</button>
         <button data-otab="report" class="${view.ownerTab === "report" ? "active" : ""}"><span class="tb-ico">📊</span>דוח</button>
         <button data-otab="settings" class="${view.ownerTab === "settings" ? "active" : ""}"><span class="tb-ico">⚙️</span>הגדרות</button>
       </div>
@@ -1129,6 +1141,69 @@
     if (upcoming.length) html += `<div class="section-title">תורים קרובים (${upcoming.length})</div>` + upcoming.map((x) => row(x, false)).join("");
     if (past.length) html += `<div class="section-title">היסטוריה</div>` + past.map((x) => row(x, true)).join("");
     return html;
+  }
+
+  /* ---------- רשימת לקוחות (CRM) ---------- */
+  function clientKey(b) { return (b.phone && u.normalizePhone(b.phone)) || b.userId || b.userName || "לקוח"; }
+
+  function ownerClients(st) {
+    const map = new Map();
+    st.bookings.filter((b) => b.status !== "cancelled").forEach((b) => {
+      const key = clientKey(b);
+      let c = map.get(key);
+      if (!c) { c = { key, name: b.userName || "לקוח", phone: b.phone || "", visits: 0, spent: 0, lastTs: 0, lastDate: b.date }; map.set(key, c); }
+      if (b.userName) c.name = b.userName;
+      if (b.phone) c.phone = b.phone;
+      if (b.status === "confirmed") { c.visits++; c.spent += Number(b.price || 0); }
+      const ts = u.dateTime(b.date, b.start).getTime();
+      if (ts > c.lastTs) { c.lastTs = ts; c.lastDate = b.date; }
+    });
+    const clients = [...map.values()].sort((a, z) => z.lastTs - a.lastTs);
+    if (!clients.length) return emptyState("👥", "אין עדיין לקוחות", "לקוחות יופיעו כאן אחרי שיזמינו תור");
+    const totalSpent = clients.reduce((s, c) => s + c.spent, 0);
+    const totalVisits = clients.reduce((s, c) => s + c.visits, 0);
+    return `
+      <div class="stat-chips">
+        <div class="stat-chip"><div class="sc-num">${clients.length}</div><div class="sc-lbl">לקוחות</div></div>
+        <div class="stat-chip"><div class="sc-num">${totalVisits}</div><div class="sc-lbl">ביקורים</div></div>
+        <div class="stat-chip"><div class="sc-num">${u.fmtPrice(totalSpent)}</div><div class="sc-lbl">סה״כ</div></div>
+      </div>
+      <div class="section-title">כל הלקוחות</div>
+      ${clients.map((c) => `
+        <div class="card" style="padding:13px 15px">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div class="cli-ava">${esc((String(c.name).trim()[0]) || "?")}</div>
+            <div style="flex:1;min-width:0">
+              <div class="bk-title">${esc(c.name)}</div>
+              <div class="bk-sub">${c.phone ? `<a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : "ללא טלפון"}</div>
+              <div class="bk-sub">${c.visits} ביקורים · <b>${u.fmtPrice(c.spent)}</b> · אחרון ${esc(u.relativeDay(c.lastDate))}</div>
+            </div>
+            <button class="btn btn-sm" data-act="client-detail" data-key="${esc(c.key)}">פרטים</button>
+          </div>
+        </div>`).join("")}
+    `;
+  }
+
+  function clientDetail(key) {
+    const st = Store.get();
+    const bks = st.bookings.filter((b) => b.status !== "cancelled" && clientKey(b) === key)
+      .sort((a, z) => u.dateTime(z.date, z.start) - u.dateTime(a.date, a.start));
+    if (!bks.length) return;
+    const name = bks[0].userName || "לקוח";
+    const phone = (bks.find((b) => b.phone) || {}).phone || "";
+    const spent = bks.filter((b) => b.status === "confirmed").reduce((s, b) => s + Number(b.price || 0), 0);
+    openModal(`
+      <div class="m-title">${esc(name)}</div>
+      <div class="m-sub">${bks.length} תורים · ${u.fmtPrice(spent)} סה״כ${phone ? ` · <a href="tel:${esc(phone)}">${esc(phone)}</a>` : ""}</div>
+      <div style="max-height:52vh;overflow-y:auto;margin-top:8px">
+        ${bks.map((b) => `
+          <div class="summary-row">
+            <span class="sr-k">${esc(u.longDate(b.date))} · ${esc(b.start)}</span>
+            <span class="sr-v">${esc(b.serviceName)} · ${u.fmtPrice(b.price)} ${b.status === "confirmed" ? "✓" : ""}</span>
+          </div>`).join("")}
+      </div>
+      <button class="btn btn-ghost" data-act="close-modal" style="margin-top:14px">סגירה</button>
+    `);
   }
 
   /* ---------- דוח חודשי (מנהל בלבד) ---------- */
@@ -1414,6 +1489,8 @@
           toast("התור בוטל", "", "🗑️"); render(); break;
 
         case "enable-notif": handleEnableNotif(); break;
+        case "toggle-theme": toggleTheme(); break;
+        case "client-detail": clientDetail(t.dataset.key); break;
         case "install-app": doInstall(); break;
         case "install-dismiss": suppressInstall(3); hideInstallBar(); break;
         case "cookie-ok":
