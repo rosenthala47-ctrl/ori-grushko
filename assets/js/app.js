@@ -288,35 +288,31 @@
     }
     let body;
     if (view.clientTab === "gallery") body = clientGallery();
+    else if (view.clientTab === "reviews") body = clientReviews();
     else if (view.clientTab === "mine") body = clientMine(st);
     else body = clientBook(st, activeServices);
     return `
     <div class="screen active">
       ${topbar("קביעת תור", {})}
       <div class="content" id="cscroll">${body}</div>
-      <div class="tabbar">
+      <div class="tabbar scroll">
         <button data-tab="book" class="${view.clientTab === "book" ? "active" : ""}">
           <span class="tb-ico">🗓️</span>קביעת תור</button>
         <button data-tab="gallery" class="${view.clientTab === "gallery" ? "active" : ""}">
           <span class="tb-ico">🖼️</span>גלריה</button>
+        <button data-tab="reviews" class="${view.clientTab === "reviews" ? "active" : ""}">
+          <span class="tb-ico">⭐</span>ביקורות</button>
         <button data-tab="mine" class="${view.clientTab === "mine" ? "active" : ""}">
           <span class="tb-ico">🎟️</span>התורים שלי</button>
       </div>
     </div>`;
   }
 
-  /* ---------- גלריה + ביקורות (תצוגת לקוח) ---------- */
+  /* ---------- גלריה (תמונות בלבד) ---------- */
   function clientGallery() {
     const photos = Store.getGallery();
-    const reviews = (Store.get().reviews || []).slice().sort((a, z) => (z.createdAt || 0) - (a.createdAt || 0));
-    const avg = reviews.length ? (reviews.reduce((s, r) => s + Number(r.rating || 0), 0) / reviews.length).toFixed(1) : null;
-
-    if (!photos.length && !reviews.length) {
-      return emptyState("🖼️", "הגלריה בקרוב", "בעל העסק עדיין לא העלה תמונות או ביקורות");
-    }
-    let html = "";
-    if (photos.length) {
-      html += `
+    if (!photos.length) return emptyState("🖼️", "הגלריה בקרוב", "בעל העסק עדיין לא העלה תמונות של תספורות");
+    return `
       <div class="section-title">גלריית תספורות</div>
       <div class="gallery-grid">
         ${photos.map((p) => `
@@ -325,10 +321,27 @@
             ${p.caption ? `<span class="gcap">${esc(p.caption)}</span>` : ""}
           </button>`).join("")}
       </div>`;
-    }
-    html += `<div class="section-title">⭐ מה הלקוחות אומרים${avg ? ` · ${avg} מתוך 5` : ""}</div>`;
-    if (!reviews.length) html += `<p class="hint">אין עדיין ביקורות — היו הראשונים לדרג אחרי התספורת הבאה!</p>`;
-    else html += reviews.slice(0, 40).map((r) => reviewCardHtml(r)).join("");
+  }
+
+  /* ---------- ביקורות (מסך נפרד ללקוח) ---------- */
+  function starsRow(n) {
+    n = Math.max(0, Math.min(5, n));
+    return `<span class="rev-stars big">${"★".repeat(n)}<span class="dim">${"★".repeat(5 - n)}</span></span>`;
+  }
+  function clientReviews() {
+    const st = Store.get();
+    const reviews = (st.reviews || []).slice().sort((a, z) => (z.createdAt || 0) - (a.createdAt || 0));
+    const avg = reviews.length ? reviews.reduce((s, r) => s + Number(r.rating || 0), 0) / reviews.length : 0;
+    const b = reviewableBooking(st);
+    let html = `
+      <div class="reviews-hero">
+        <div class="rh-avg">${reviews.length ? avg.toFixed(1) : "—"}</div>
+        ${starsRow(Math.round(avg))}
+        <div class="rh-count">${reviews.length} ${reviews.length === 1 ? "ביקורת" : "ביקורות"}</div>
+      </div>`;
+    if (b) html += `<button class="btn btn-primary" data-act="open-review" data-id="${b.id}" style="margin-bottom:16px">⭐ דרג את התספורת שלך</button>`;
+    if (!reviews.length) html += emptyState("⭐", "אין עדיין ביקורות", "היו הראשונים לדרג אחרי התספורת הבאה!");
+    else html += reviews.map((r) => reviewCardHtml(r)).join("");
     return html;
   }
 
@@ -567,26 +580,31 @@
   }
 
   /* ---------- באנר בקשת דירוג אחרי תספורת ---------- */
-  function reviewBanner(st) {
+  function reviewsMuted() { return localStorage.getItem("ug_reviews_off__" + SHOP) === "1"; }
+  function reviewableBooking(st) {
     const skip = new Set(JSON.parse(localStorage.getItem("ug_review_skip") || "[]"));
     const reviewed = new Set((st.reviews || []).filter((r) => r.userId === identity.userId).map((r) => r.bookingId));
     const now = Date.now();
-    const b = st.bookings
+    const o = st.bookings
       .filter((x) => x.userId === identity.userId && x.status !== "cancelled")
       .map((x) => ({ x, end: u.dateTime(x.date, x.end).getTime() }))
       .filter((o) => o.end < now && now - o.end < 14 * 86400000 && !reviewed.has(o.x.id) && !skip.has(o.x.id))
       .sort((a, z) => z.end - a.end)[0];
+    return o ? o.x : null;
+  }
+  function reviewBanner(st) {
+    if (reviewsMuted()) return "";
+    const b = reviewableBooking(st);
     if (!b) return "";
     return `
     <div class="banner good">
       <span class="bn-ico">⭐</span>
       <div class="bn-body">
         <div class="bn-title">איך הייתה התספורת?</div>
-        <div class="bn-sub">${esc(b.x.serviceName)} · נשמח לדירוג וביקורת קצרה</div>
+        <div class="bn-sub">${esc(b.serviceName)} · <span class="lnk" data-act="review-skip" data-id="${b.id}">אחר כך</span> · <span class="lnk" data-act="review-never">אל תשאל שוב</span></div>
       </div>
       <div class="bn-actions">
-        <button class="btn btn-primary btn-sm" data-act="open-review" data-id="${b.x.id}">דרג</button>
-        <button class="btn btn-ghost btn-sm" data-act="review-skip" data-id="${b.x.id}">אולי אחר כך</button>
+        <button class="btn btn-primary btn-sm" data-act="open-review" data-id="${b.id}">דרג</button>
       </div>
     </div>`;
   }
@@ -620,7 +638,8 @@
       .map((b) => ({ b, ts: u.dateTime(b.date, b.start).getTime() }))
       .sort((a, z) => a.ts - z.ts);
     const upcoming = mine.filter((x) => x.ts > now - 60 * 60000);
-    const past = mine.filter((x) => x.ts <= now - 60 * 60000).reverse();
+    const cleared = Number(localStorage.getItem("ug_hist_cleared__" + SHOP) || 0);
+    const past = mine.filter((x) => x.ts <= now - 60 * 60000 && x.ts >= cleared).reverse();
     const myWaits = (st.waitlist || [])
       .filter((w) => w.userId === identity.userId)
       .map((w) => ({ w, ts: u.dateTime(w.date, w.start).getTime() }))
@@ -678,9 +697,22 @@
       </div>`).join("");
     }
     if (past.length) {
-      html += `<div class="section-title">היסטוריה</div>` + past.map((x) => card(x, true)).join("");
+      html += `<div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+        <span>היסטוריה</span>
+        <span class="lnk" data-act="clear-history" style="color:var(--bad);font-size:12px">🗑️ מחיקת היסטוריה</span>
+      </div>` + past.map((x) => card(x, true)).join("");
     }
     return html;
+  }
+
+  function confirmClearHistory() {
+    openModal(`
+      <div class="m-title">מחיקת היסטוריה</div>
+      <div class="m-sub">היסטוריית התורים שלך תוסתר לצמיתות מהמכשיר הזה</div>
+      <p style="font-size:14px;color:var(--muted);margin:6px 0 20px">התורים העתידיים שלך יישארו. הפעולה משפיעה רק על התצוגה שלך.</p>
+      <button class="btn btn-danger" data-act="do-clear-history">מחיקה</button>
+      <button class="btn btn-ghost" data-act="close-modal" style="margin-top:8px">ביטול</button>
+    `);
   }
 
   /* ---------- מודאל אישור הזמנה ---------- */
@@ -1604,6 +1636,13 @@
         case "alert-dismiss": await Store.consumeAlert(t.dataset.id); render(); break;
 
         // דירוג וביקורת
+        case "clear-history": confirmClearHistory(); break;
+        case "do-clear-history":
+          localStorage.setItem("ug_hist_cleared__" + SHOP, String(Date.now()));
+          closeModal(); toast("ההיסטוריה נמחקה", "", "🗑️"); render(); break;
+        case "review-never":
+          localStorage.setItem("ug_reviews_off__" + SHOP, "1");
+          toast("לא נטריד אותך שוב 🙂", "good", "👍"); render(); break;
         case "open-review": openReview(t.dataset.id); break;
         case "review-skip": {
           let skip; try { skip = JSON.parse(localStorage.getItem("ug_review_skip") || "[]"); } catch (e2) { skip = []; }

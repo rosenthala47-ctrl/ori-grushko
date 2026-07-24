@@ -460,6 +460,17 @@ a.nav-btn { flex: 1; color: var(--text); text-decoration: none; }
 .stars .star:active { transform: scale(1.15); }
 .rev-stars { color: #fbbf24; font-size: 15px; letter-spacing: 1px; white-space: nowrap; }
 .rev-stars .dim { color: #3a4356; }
+.rev-stars.big { font-size: 24px; letter-spacing: 2px; }
+.lnk { color: var(--sky); cursor: pointer; text-decoration: underline; font-weight: 600; }
+
+/* ==== מסך ביקורות (לקוח) ==== */
+.reviews-hero {
+  text-align: center; padding: 20px 12px 22px; margin-bottom: 16px; border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface), var(--bg-2)); border: 1px solid var(--line);
+}
+.reviews-hero .rh-avg { font-size: 48px; font-weight: 800; line-height: 1; }
+.reviews-hero .rev-stars.big { display: inline-block; margin-top: 10px; }
+.reviews-hero .rh-count { font-size: 13.5px; color: var(--muted); margin-top: 10px; }
 
 /* ==== דוח חודשי (מנהל) ==== */
 .month-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
