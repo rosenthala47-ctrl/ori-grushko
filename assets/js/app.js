@@ -14,7 +14,7 @@
 
   /* גרסת האפליקציה — מוצגת בהגדרות כדי לוודא שקיבלתם את העדכון האחרון.
      יש לעדכן יחד עם CACHE ב-sw.js. */
-  const APP_VERSION = "197";
+  const APP_VERSION = "198";
 
   /* ---------- זיהוי המספרה מהקישור (רב-משתמשי) ----------
      אינסטגרם ופייסבוק מצמידים פרמטר מעקב לקישור שמשתפים בהם (igsh / igshid / fbclid),
@@ -719,7 +719,7 @@
     const start = u.dateTime(b.date, b.start), end = u.dateTime(b.date, b.end);
     const dates = icsDate(start) + "/" + icsDate(end);      // YYYYMMDDTHHMMSSZ/…
     const text = b.serviceName + " — " + st.shop.name;
-    const details = "תור ל" + b.serviceName + " · " + u.fmtPrice(b.price);
+    const details = "תור ל" + b.serviceName + " · " + u.fmtPrice(myBkPrice(b));
     const url = "https://calendar.google.com/calendar/render?action=TEMPLATE" +
       "&text=" + encodeURIComponent(text) +
       "&dates=" + dates +
@@ -1127,6 +1127,7 @@
 
   function renderClient() {
     const st = Store.get();
+    refreshMyVip();   // המחיר שהספר בחר להציג לי (ברקע; מצייר מחדש רק כשהשתנה)
     // מודל חדש: זיהוי חובה לפני הזמנה (לא חל על "תצוגת לקוח" של הבעלים)
     if (newAuthShop() && !view.ownerPreview && !clientIdentified()) {
       return clientAuthGate(st);
@@ -2572,7 +2573,8 @@
           <div class="svc-name">${esc(s.name)}</div>
           <div class="svc-sub">${u.fmtDuration(s.durationMin)}</div>
         </div>
-        <div class="svc-price">${u.fmtPrice(s.price)}</div>
+        ${(() => { const mp = myPriceAt(s.id, Date.now());
+          return mp != null ? `<div class="svc-price">${u.fmtPrice(mp)}<small class="my-price">המחיר שלך</small></div>` : `<div class="svc-price">${u.fmtPrice(s.price)}</div>`; })()}
       </button>`).join("");
 
     const service = services.find((s) => s.id === view.selService);
@@ -3016,7 +3018,7 @@
           </div>
           <div class="bk-body">
             <div class="bk-title">${esc(b.serviceName)}</div>
-            <div class="bk-sub">${esc(u.longDate(b.date))} · <b>${u.fmtPrice(b.price)}</b></div>
+            <div class="bk-sub">${esc(u.longDate(b.date))} · <b>${u.fmtPrice(myBkPrice(b))}</b></div>
           </div>
           ${st2}
         </div>
@@ -3087,7 +3089,7 @@
       ${row("שעה", `<span dir="ltr">${esc(b.start)}–${esc(b.end)}</span>`)}
       ${mins > 0 ? row("משך", u.fmtDuration(mins)) : ""}
       ${b.staff ? row("ספר", esc(b.staff)) : ""}
-      <div class="summary-row"><span class="sr-k">מחיר</span><span class="sr-v big">${u.fmtPrice(b.price)}</span></div>
+      <div class="summary-row"><span class="sr-k">מחיר</span><span class="sr-v big">${u.fmtPrice(myBkPrice(b))}</span></div>
       <div class="summary-row"><span class="sr-k">סטטוס</span><span class="sr-v">${confirmed
         ? `<span class="status-tag status-confirmed">✓ אושר</span>`
         : `<span class="status-tag status-booked">ממתין</span>`}</span></div>
@@ -3136,7 +3138,7 @@
       <div class="summary-row"><span class="sr-k">תאריך</span><span class="sr-v">${esc(u.longDate(view.selDate))}</span></div>
       <div class="summary-row"><span class="sr-k">שעה</span><span class="sr-v">${esc(view.selSlot)}</span></div>
       <div class="summary-row"><span class="sr-k">משך</span><span class="sr-v">${u.fmtDuration(service.durationMin)}</span></div>
-      <div class="summary-row"><span class="sr-k">מחיר</span><span class="sr-v big">${u.fmtPrice(service.price)}</span></div>
+      <div class="summary-row"><span class="sr-k">מחיר</span><span class="sr-v big">${(() => { const mp = myPriceAt(service.id, u.dateTime(view.selDate, view.selSlot).getTime()); return u.fmtPrice(mp != null ? mp : service.price); })()}</span></div>
       <div style="height:18px"></div>
       ${(st.shop.staff && st.shop.staff.length) ? `
       <div class="field"><label>ספר מועדף <span class="opt-star">*</span></label>
@@ -3294,7 +3296,7 @@
     toast(reschedId ? "המועד עודכן ✓" : "התור נקבע בהצלחה!", "good", reschedId ? "🔄" : "🎉");
     // מייל אישור ללקוח. במספרה מאובטחת השם/המייל אינם בתור הציבורי, לכן משלימים
     // אותם מהפרטים המקומיים שהלקוח מילא זה עתה.
-    sendBookingEmail(Object.assign({}, res.booking, { userName: contact.name, email: contact.email }));
+    sendBookingEmail(Object.assign({}, res.booking, { userName: contact.name, email: contact.email, price: myBkPrice(res.booking) }));
     // אם ההזמנה הגיעה מהתראת "התפנה תור" — נקה את ההתראה
     const stale = (Store.get().alerts || [])
       .filter((a) => a.userId === identity.userId && a.date === bookedDate && a.start === bookedStart)
@@ -4811,7 +4813,7 @@
      מאובטחת) ו**לא נכתב לתור**: התור נשאר עם המחיר הרגיל, והמסכים של הספר מחשבים את
      המחיר בפועל (bkPrice). כך המכשיר של הלקוח לא מחזיק את המחיר אף פעם, ואין כתיבה
      ברקע לצומת התורים (שבמספרה רגילה נכתב כולו בבת אחת ויכול היה לדרוס תור חדש).
-     הלקוח עצמו רואה באפליקציה את המחיר הרגיל — את המחיר המיוחד הוא שומע מהספר. */
+     הלקוח עצמו רואה את המחיר הרגיל, אלא אם הספר בחר להציג לו (v198 — ראו myVip למטה). */
   const priceKeyOk = (k) => /^\+?\d{6,15}$/.test(String(k || ""));
   // המחיר שהיה בתוקף ברגע ts לפי ההיסטוריה (מסודרת לפי זמן). null = רגיל
   function priceAt(hist, ts) {
@@ -4839,6 +4841,8 @@
       .map((svc) => ({ svc, p: specialPrice(key, svc.id, now) }))
       .filter((x) => x.p != null);
   }
+  // האם הספר בחר שהלקוח יראה את המחיר שלו (דגל _show ברשומה של הלקוח)
+  const shownToClient = (key) => !!((Store.getClientPrices()[key] || {})._show);
   // שורת תקציר: "💰 תספורת גבר 50 ₪ (רגיל 70 ₪)"
   function specialsLine(key) {
     // כל שירות בתוך span משלו — כך מנוע התרגום מתרגם כל אחד לחוד, גם כשיש כמה
@@ -4855,7 +4859,7 @@
     const has = activeSpecials(key).length > 0;
     return `
       <div class="m-title">💰 מחיר מיוחד · ${esc(c.name)}</div>
-      <div class="m-sub">רק אתה רואה את זה. הלקוחות האחרים לא יודעים — וגם הוא עצמו רואה באפליקציה את המחיר הרגיל.</div>
+      <div class="m-sub">הלקוחות האחרים לא יודעים על זה בשום מקום. אתה בוחר אם הלקוח עצמו יראה את המחיר שלו.</div>
       ${svcs.map((svc) => {
         const cur = specialPrice(key, svc.id, now);
         return `
@@ -4864,10 +4868,47 @@
                  data-cpsvc="${esc(svc.id)}" placeholder="${esc(String(svc.price))} — רגיל" value="${cur != null ? esc(String(cur)) : ""}"></div>`;
       }).join("")}
       <p class="hint" style="margin:4px 0 14px">שדה ריק = המחיר הרגיל. המחיר המיוחד חל על כל התורים שלו מעכשיו, גם על אלה שכבר נקבעו. תורים שכבר עברו נשארים במחיר שהיה.</p>
+      <label class="ab-custom cp-show">
+        <input type="checkbox" id="cp-show" ${shownToClient(key) ? "checked" : ""}>
+        <span>👁️ להציג ל${esc(c.name)} את המחיר שלו באפליקציה</span>
+      </label>
+      <p class="hint" style="margin:0 0 14px">מסומן — כשהוא נכנס הוא רואה את המחיר שלו בבחירת השירות, באישור התור ובתורים שלו. רק הוא: המחיר נשמר מוצפן, וטלפון של לקוח אחר לא יכול לפתוח אותו. לא מסומן — הוא רואה את המחיר הרגיל.</p>
       <button class="btn btn-primary" data-act="cp-save" data-key="${esc(key)}">שמירה</button>
       ${has ? `<button class="btn btn-ghost" data-act="cp-clear" data-key="${esc(key)}" style="margin-top:8px">חזרה למחיר הרגיל</button>` : ""}
       <button class="btn btn-ghost" data-act="client-detail" data-key="${esc(key)}" style="margin-top:8px">‹ חזרה לכרטיס הלקוח</button>`;
   }
+  /* ---------- המחיר שלי — בצד הלקוח (v198) ----------
+     אם הספר בחר להציג ללקוח את המחיר המיוחד שלו, הוא נשמר מוצפן במספרה (state.vip)
+     ונפתח רק עם הטלפון שבזהות של הלקוח (Store.readVip). הפענוח אסינכרוני ואיטי בכוונה
+     (מגן מפני ניחוש), ולכן: refreshMyVip רץ ברקע, שומר את התוצאה ב-myVip ומצייר מחדש
+     רק כשמשהו השתנה. בתצוגת לקוח של הספר (ownerPreview) לא מציגים — שם רואים את מה
+     שלקוח רגיל רואה. */
+  let myVip = null, myVipSig = "";
+  function refreshMyVip() {
+    const st = Store.get();
+    const vip = (st && st.vip) || {};
+    const ph = identity && identity.phone ? u.normalizePhone(identity.phone) : "";
+    const sig = ph + "|" + JSON.stringify(vip);
+    if (sig === myVipSig) return;
+    myVipSig = sig;
+    if (!ph || !Object.keys(vip).length) { if (myVip) { myVip = null; render(); } return; }
+    Store.readVip(ph).then((h) => {
+      if (JSON.stringify(h) === JSON.stringify(myVip)) return;
+      myVip = h; render();
+    }).catch(() => {});
+  }
+  function myPriceAt(svcId, ts) {
+    if (view.ownerPreview || !myVip || !myVip[svcId]) return null;
+    return priceAt(myVip[svcId], ts);
+  }
+  // המחיר של תור של הלקוח עצמו — כמו bkPrice אצל הספר, לפי שעת התור
+  function myBkPrice(b) {
+    if (!b) return 0;
+    const p = (b.userId && identity && b.userId === identity.userId)
+      ? myPriceAt(b.serviceId, u.dateTime(b.date, b.start).getTime()) : null;
+    return p != null ? p : Number(b.price || 0);
+  }
+
   async function saveClientPrice(key, clear) {
     const st = Store.get();
     const changes = {};
@@ -4883,8 +4924,10 @@
       changes[svc.id] = Math.round(n) === Number(svc.price) ? null : Math.round(n);
     });
     if (bad) { toast("מחיר לא תקין", "", "✋"); return; }
+    const showEl = $("#cp-show");
+    const opts = showEl ? { show: !!showEl.checked } : {};
     try {
-      const n = await Store.setClientPrices(key, changes);
+      const n = await Store.setClientPrices(key, changes, opts);
       toast(clear ? "חזר למחיר הרגיל" : (n ? "המחיר המיוחד נשמר" : "לא היה מה לשנות"), n ? "good" : "", "💰");
     } catch (e) { toast("השמירה נכשלה — נסו שוב", "", "⚠️"); return; }
     haptic(12);
@@ -5244,7 +5287,8 @@
     const sp = specialsLine(key);
     const priceBlock = priceKeyOk(key) ? `
       <div class="cd-price${sp ? " on" : ""}">
-        ${sp ? `<div class="cd-price-now">💰 מחיר מיוחד: ${sp}</div>` : ""}
+        ${sp ? `<div class="cd-price-now">💰 מחיר מיוחד: ${sp}</div>
+        <div class="cd-price-vis">${shownToClient(key) ? "👁️ הלקוח רואה את המחיר הזה באפליקציה" : "🙈 הלקוח רואה באפליקציה את המחיר הרגיל"}</div>` : ""}
         <button class="btn btn-sm" data-act="cp-edit" data-key="${esc(key)}">💰 ${sp ? "שינוי המחיר המיוחד" : "מחיר מיוחד ללקוח"}</button>
       </div>` : `<p class="hint" style="margin:10px 0 0">💰 כדי לקבוע ללקוח מחיר מיוחד צריך את הטלפון שלו.</p>`;
     openModal(`

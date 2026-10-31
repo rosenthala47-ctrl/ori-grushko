@@ -101,6 +101,8 @@ UG.Store = (function () {
       if (!PRICE_KEY.test(key) || !m[key] || typeof m[key] !== "object") return;
       const per = {};
       Object.keys(m[key]).forEach((svc) => {
+        // _show = הספר בחר להציג ללקוח עצמו את המחיר שלו (v198)
+        if (svc === "_show") { if (m[key][svc] === true) per._show = true; return; }
         const hist = asArray(m[key][svc])
           .filter((h) => h && typeof h === "object" && Number(h.at) > 0)
           .map((h) => ({ p: (typeof h.p === "number" && h.p >= 0) ? h.p : null, at: Number(h.at) }))
@@ -161,6 +163,7 @@ UG.Store = (function () {
     if (!Array.isArray(s.opens)) s.opens = [];
     s.breaks = normBreaks(s.breaks);
     if (s.clientPrices) s.clientPrices = normPrices(s.clientPrices);
+    s.vip = normVip(s.vip);
     if (!Array.isArray(s.reviews)) s.reviews = [];
     if (!Array.isArray(s.shop.staff)) s.shop.staff = [];
     if (!s.shop.address) s.shop.address = base.shop.address;
@@ -1051,14 +1054,18 @@ UG.Store = (function () {
   }
   /* changes = { <מזהה שירות>: מחיר | null }. null = חזרה למחיר הרגיל. מוסיף גרסה רק
      כשהמחיר באמת השתנה, ושומר עד 20 גרסאות לשירות. מחזיר כמה שירותים השתנו. */
-  function setClientPrices(key, changes) {
+  async function setClientPrices(key, changes, opts) {
     key = String(key || "");
-    if (!PRICE_KEY.test(key)) return Promise.reject(new Error("צריך טלפון של הלקוח"));
+    if (!PRICE_KEY.test(key)) throw new Error("צריך טלפון של הלקוח");
     const priv = extraPrivate();
     const map = JSON.parse(JSON.stringify(getClientPrices()));
     const per = map[key] || {};
     const now = Date.now();
     let changed = 0;
+    // האם להציג ללקוח עצמו (undefined = לא לגעת)
+    const show = opts && typeof opts.show === "boolean" ? opts.show : undefined;
+    const showChanged = show !== undefined && !!per._show !== show;
+    if (showChanged) { if (show) per._show = true; else delete per._show; changed++; }
     Object.keys(changes || {}).forEach((svc) => {
       const raw = changes[svc];
       const p = (raw == null || raw === "") ? null : Math.max(0, Math.round(Number(raw)));
@@ -1070,20 +1077,88 @@ UG.Store = (function () {
       per[svc] = hist.slice(-20);
       changed++;
     });
-    if (!changed) return Promise.resolve(0);
+    if (!changed) return 0;
     map[key] = per;
+    // שמירת נתוני המספרה (persist) רק כשבאמת השתנה בהם משהו: במספרה לא-מחמירה היא
+    // כותבת גם את כל התורים, ולכן לא מבצעים אותה סתם.
+    let needPersist = !priv;
     if (priv) {
       pricesCache = map; emit();
-      return backend.savePrices(map).then(async () => {
-        if (state.clientPrices && Object.keys(state.clientPrices).length) {
-          state.clientPrices = null;
-          try { await persist(); } catch (e) { /* העותק הגלוי יימחק בשמירה הבאה */ }
-        }
-        return changed;
-      }, (err) => { throw reportWriteError(err); });
+      try { await backend.savePrices(map); } catch (err) { throw reportWriteError(err); }
+      if (state.clientPrices && Object.keys(state.clientPrices).length) { state.clientPrices = null; needPersist = true; }   // עובר לכספת
+    } else {
+      state.clientPrices = map;
     }
-    state.clientPrices = map;
-    return persist().then(() => changed);
+    // העותק המוצפן שהלקוח קורא — מתעדכן כשהוא מוצג או כשההצגה כובתה
+    if (per._show || showChanged) { await putVip(key, per); needPersist = true; }
+    if (needPersist) await persist();
+    return changed;
+  }
+
+  /* ---------- הצגת המחיר המיוחד ללקוח עצמו (v198) ----------
+     הספר בוחר אם הלקוח יראה את המחיר שלו. הלקוח מזוהה בטלפון בלבד (בלי חשבון שחוקי
+     השרת יודעים לבדוק), ולכן אי אפשר "לנעול לו" צומת. במקום זה: עותק **מוצפן** בצומת
+     הגלוי של המספרה (state.vip), שהמפתח שלו נגזר מהטלפון של הלקוח:
+       PBKDF2(טלפון מנורמל, "barbertor-vip:<shop>", 150,000 סבבים) → 32 בתים:
+       12 ראשונים = מזהה הרשומה, 16 אחרונים = מפתח AES-GCM.
+     רק מכשיר שיודע את הטלפון מוצא את הרשומה ופותח אותה. לקוח אחר רואה רק מספר רשומות
+     מוצפנות, בלי לדעת של מי ומה בתוכן; ניחוש טלפונים בכוח איטי מאוד בגלל 150,000 הסבבים.
+     התוכן: ההיסטוריה של הלקוח הזה בלבד ({ svc: [{p, at}] }), כמו אצל הספר. */
+  const VIP_ITER = 150000;
+  const vipKeys = new Map();   // טלפון → { id, aes } — הגזירה איטית בכוונה, ולכן נשמרת
+  const toB64 = (bytes) => btoa(String.fromCharCode.apply(null, Array.from(bytes)));
+  const fromB64 = (s) => Uint8Array.from(atob(String(s || "")), (c) => c.charCodeAt(0));
+  function normVip(v) {
+    const out = {};
+    if (!v || typeof v !== "object") return out;
+    Object.keys(v).forEach((id) => {
+      const r = v[id];
+      if (/^[0-9a-f]{24}$/.test(id) && r && typeof r.iv === "string" && typeof r.ct === "string") out[id] = { iv: r.iv, ct: r.ct };
+    });
+    return out;
+  }
+  async function vipDerive(phoneKey) {
+    const ck = shopId + "|" + phoneKey;
+    if (vipKeys.has(ck)) return vipKeys.get(ck);
+    const subtle = window.crypto && window.crypto.subtle;
+    if (!subtle) throw new Error("no-webcrypto");
+    const enc = new TextEncoder();
+    const base = await subtle.importKey("raw", enc.encode(phoneKey), "PBKDF2", false, ["deriveBits"]);
+    const bits = new Uint8Array(await subtle.deriveBits(
+      { name: "PBKDF2", salt: enc.encode("barbertor-vip:" + shopId), iterations: VIP_ITER, hash: "SHA-256" }, base, 256));
+    const id = Array.from(bits.slice(0, 12)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const aes = await subtle.importKey("raw", bits.slice(16, 32), "AES-GCM", false, ["encrypt", "decrypt"]);
+    const out = { id, aes };
+    vipKeys.set(ck, out);
+    return out;
+  }
+  // כותב/מוחק את הרשומה המוצפנת של הלקוח ב-state.vip (השמירה עצמה — אצל הקורא)
+  async function putVip(key, per) {
+    const { id, aes } = await vipDerive(key);
+    state.vip = normVip(state.vip);
+    if (per && per._show) {
+      const hist = {};
+      Object.keys(per).forEach((k) => { if (k !== "_show") hist[k] = per[k]; });
+      const iv = window.crypto.getRandomValues(new Uint8Array(12));
+      const ct = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, aes, new TextEncoder().encode(JSON.stringify(hist)));
+      state.vip[id] = { iv: toB64(iv), ct: toB64(new Uint8Array(ct)) };
+    } else {
+      delete state.vip[id];
+    }
+  }
+  /* בצד הלקוח: המחירים שהספר בחר להציג לו, או null. phone = הטלפון מהזהות שלו. */
+  async function readVip(phone) {
+    const vip = state && state.vip;
+    const key = u.normalizePhone(phone || "");
+    if (!vip || !Object.keys(vip).length || !PRICE_KEY.test(key)) return null;
+    try {
+      const { id, aes } = await vipDerive(key);
+      const rec = vip[id];
+      if (!rec) return null;
+      const pt = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(rec.iv) }, aes, fromB64(rec.ct));
+      const m = normPrices({ [key]: JSON.parse(new TextDecoder().decode(pt)) });
+      return m[key] || null;
+    } catch (e) { return null; }
   }
 
   function removeContact(id) {
@@ -1544,7 +1619,7 @@ UG.Store = (function () {
   return {
     init, subscribe, get,
     setDay, setBreaks, breaksOn, setWeekVariable, saveShop, upsertService, removeService, upsertProduct, removeProduct,
-    addContacts, removeContact, getClientPrices, setClientPrices, addBroadcast, addClosedDates, removeClosedDate,
+    addContacts, removeContact, getClientPrices, setClientPrices, readVip, addBroadcast, addClosedDates, removeClosedDate,
     setSlotOpen, blockClient, unblockClient,
     createBooking, setBookingStatus, deleteBooking,
     joinWaitlist, leaveWaitlist, consumeAlert, addReview, savePushToken,

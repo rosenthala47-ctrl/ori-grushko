@@ -1353,8 +1353,15 @@ window.UG.I18N_DICT.en = Object.assign(
   "לקוח הזה": "this client",
   "רגיל": "regular",
   "רגיל {0}": "regular {0}",
-  "רק אתה רואה את זה. הלקוחות האחרים לא יודעים — וגם הוא עצמו רואה באפליקציה את המחיר הרגיל.":
-    "Only you can see this. Other clients don't know — and this client also sees the regular price in the app.",
+  "הלקוחות האחרים לא יודעים על זה בשום מקום. אתה בוחר אם הלקוח עצמו יראה את המחיר שלו.":
+    "Other clients never see this anywhere. You choose whether this client sees their own price.",
+  /* ── הצגת המחיר המיוחד ללקוח עצמו (v198) ── */
+  "להציג ל{0} את המחיר שלו באפליקציה": "Show {0} their price in the app",
+  "מסומן — כשהוא נכנס הוא רואה את המחיר שלו בבחירת השירות, באישור התור ובתורים שלו. רק הוא: המחיר נשמר מוצפן, וטלפון של לקוח אחר לא יכול לפתוח אותו. לא מסומן — הוא רואה את המחיר הרגיל.":
+    "Checked — when they open the app they see their price when picking a service, when confirming and in their appointments. Only them: the price is stored encrypted, and another client's phone can't open it. Unchecked — they see the regular price.",
+  "הלקוח רואה את המחיר הזה באפליקציה": "The client sees this price in the app",
+  "הלקוח רואה באפליקציה את המחיר הרגיל": "The client sees the regular price in the app",
+  "המחיר שלך": "Your price",
   "שדה ריק = המחיר הרגיל. המחיר המיוחד חל על כל התורים שלו מעכשיו, גם על אלה שכבר נקבעו. תורים שכבר עברו נשארים במחיר שהיה.":
     "Empty = the regular price. The special price applies to all of this client's appointments from now on, including ones already booked. Past appointments keep the price they had.",
   "חזרה למחיר הרגיל": "Back to the regular price",
